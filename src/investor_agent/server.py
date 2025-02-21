@@ -360,16 +360,18 @@ async def get_institutional_holders(ticker: str) -> str:
                 - Holder name
                 - Shares held
                 - Value of holding
-                - Percentage of shares outstanding
-                - Last report date
+                - Percentage held
+                - Date reported
+                - % Change
             2. Mutual Fund Holders:
                 - Same columns as institutional holders
     """
     try:
         ticker_obj = yf.Ticker(ticker)
 
-        inst_holders = ticker_obj.institutional_holders
-        fund_holders = ticker_obj.mutualfund_holders
+        # Get both institutional and mutual fund holders using get_ methods
+        inst_holders = ticker_obj.get_institutional_holders()
+        fund_holders = ticker_obj.get_mutualfund_holders()
 
         if (inst_holders is None or inst_holders.empty) and (fund_holders is None or fund_holders.empty):
             return f"No institutional holder data found for {ticker}"
@@ -380,8 +382,17 @@ async def get_institutional_holders(ticker: str) -> str:
             inst_df = inst_holders.copy()
             inst_df["Shares"] = inst_df["Shares"].apply(lambda x: f"{x:,.0f}")
             inst_df["Value"] = inst_df["Value"].apply(lambda x: f"${x:,.0f}")
-            inst_df["% Out"] = inst_df["% Out"].apply(lambda x: f"{x:.2f}%")
+            inst_df["pctHeld"] = inst_df["pctHeld"].apply(lambda x: f"{x*100:.2f}%")  # Convert to percentage
             inst_df["Date Reported"] = pd.to_datetime(inst_df["Date Reported"]).dt.strftime("%Y-%m-%d")
+            inst_df["pctChange"] = inst_df["pctChange"].apply(lambda x: f"{x*100:+.2f}%" if pd.notnull(x) else "N/A")  # Add + sign and convert to percentage
+            
+            # Rename columns for better readability
+            inst_df = inst_df.rename(columns={
+                "Holder": "Institution",
+                "pctHeld": "% Held",
+                "pctChange": "% Change"
+            })
+            
             sections.append("INSTITUTIONAL HOLDERS")
             sections.append(tabulate(inst_df, headers="keys", tablefmt="grid", showindex=False))
 
@@ -389,8 +400,17 @@ async def get_institutional_holders(ticker: str) -> str:
             fund_df = fund_holders.copy()
             fund_df["Shares"] = fund_df["Shares"].apply(lambda x: f"{x:,.0f}")
             fund_df["Value"] = fund_df["Value"].apply(lambda x: f"${x:,.0f}")
-            fund_df["% Out"] = fund_df["% Out"].apply(lambda x: f"{x:.2f}%")
+            fund_df["pctHeld"] = fund_df["pctHeld"].apply(lambda x: f"{x*100:.2f}%")  # Convert to percentage
             fund_df["Date Reported"] = pd.to_datetime(fund_df["Date Reported"]).dt.strftime("%Y-%m-%d")
+            fund_df["pctChange"] = fund_df["pctChange"].apply(lambda x: f"{x*100:+.2f}%" if pd.notnull(x) else "N/A")  # Add + sign and convert to percentage
+            
+            # Rename columns for better readability
+            fund_df = fund_df.rename(columns={
+                "Holder": "Fund",
+                "pctHeld": "% Held",
+                "pctChange": "% Change"
+            })
+            
             sections.append("\nMUTUAL FUND HOLDERS")
             sections.append(tabulate(fund_df, headers="keys", tablefmt="grid", showindex=False))
 
@@ -441,7 +461,7 @@ async def get_insider_trades(ticker: str) -> str:
             - Value: Transaction value in USD
     """
     try:
-        trades = yf.Ticker(ticker).insider_trades
+        trades = yf.Ticker(ticker).insider_transactions
 
         if trades is None or trades.empty:
             return f"No insider trading data found for {ticker}"
