@@ -2,6 +2,8 @@
 .env
 .venv
 **/__pycache__
+yfinance.cache
+dist
 *.ipynb
 .cursorrules
-yfinance.cache
+example.py

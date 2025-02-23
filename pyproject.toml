@@ -1,13 +1,11 @@
 [project]
 name = "investor-agent"
-version = "0.1.1"
+version = "0.1.2"
 description = "A Model Context Protocol server for an investor agent"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "brave-search-python-client>=0.2.22",
     "mcp[cli]>=1.2.1",
-    "pydantic>=2.10.6",
     "pyrate-limiter>=2.10.0",
     "requests-cache>=1.2.1",
     "requests-ratelimiter>=0.7.0",
