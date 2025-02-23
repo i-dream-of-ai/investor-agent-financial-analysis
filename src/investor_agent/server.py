@@ -95,17 +95,21 @@ def get_ticker_data(ticker: str) -> str:
     if (recommendations := yfinance_utils.get_recommendations(ticker)) is not None and not recommendations.empty:
         rec_data = [
             [
-                f"{period}",  # period is the index (e.g., '0m', '-1m', etc.)
-                f"{row['strongBuy']} Strong Buy, {row['buy']} Buy, "
-                f"{row['hold']} Hold, {row['sell']} Sell, "
-                f"{row['strongSell']} Strong Sell"
+                row['period'],  # Use the period column directly
+                row['strongBuy'],
+                row['buy'],
+                row['hold'],
+                row['sell'],
+                row['strongSell']
             ]
-            for period, row in recommendations.iterrows()
+            for _, row in recommendations.iterrows()
             if not all(pd.isna(val) for val in row.values)
         ]
         if rec_data:
             sections.extend(["\nRECENT ANALYST RECOMMENDATIONS",
-                           tabulate(rec_data, headers=["Period", "Distribution"], tablefmt="plain")])
+                           tabulate(rec_data, 
+                                  headers=["Period", "Strong Buy", "Buy", "Hold", "Sell", "Strong Sell"],
+                                  tablefmt="plain")])
 
     # Recent upgrades/downgrades
     if (upgrades := yfinance_utils.get_upgrades_downgrades(ticker)) is not None and not upgrades.empty:
