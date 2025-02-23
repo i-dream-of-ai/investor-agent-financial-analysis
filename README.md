@@ -4,9 +4,8 @@
 
 The **investor-agent** is a Model Context Protocol (MCP) server that provides comprehensive financial insights and analysis to Large Language Models. It leverages real-time market data, news, and advanced analytics to help users obtain:
 
-- Web and news search results for financial queries via BraveSearch.
-- Detailed ticker reports including company overview and key metrics.
-- Current stock options data highlighting high open interest.
+- Detailed ticker reports including company overview, news, key metrics, performance, dates, analyst recommendations, and upgrades/downgrades.
+- Options data highlighting high open interest.
 - Historical price trends for stocks.
 - Essential financial statements (income, balance sheet, cash flow) formatted in millions USD.
 - Up-to-date institutional ownership and mutual fund holdings.
@@ -18,7 +17,6 @@ The server integrates with [yfinance](https://pypi.org/project/yfinance/) for ma
 
 - **Python:** 3.12 or higher
 - **Package Manager:** [uv](https://docs.astral.sh/uv/)
-- **API Key:** A valid BraveSearch API key. Set it via your environment variable `BRAVE_SEARCH_API_KEY`.
 
 ## Installation
 
@@ -34,38 +32,14 @@ Then, you can run the **investor-agent** MCP server using `uvx`:
 uvx investor-agent
 ```
 
-### Configuration
-
-Before running the server, export the brave search api key in your shell:
-
-```bash
-export BRAVE_SEARCH_API_KEY=<your_brave_search_api_key>
-```
-
-Alternatively, add the export command directly to your shell profile (e.g., `.bashrc` or `.zshrc`).
-
 ## Tools
 
 The **investor-agent** server comes with several tools to support financial analysis:
 
-### Web & News Search
-
-1. **`web_search`**
-   - **Description:** Performs a web search using the provided query.
-   - **Input:**
-     - `query` (string): The search query.
-   - **Return:** A list of web search results.
-
-2. **`news_search`**
-   - **Description:** Searches for news articles based on the query.
-   - **Input:**
-     - `query` (string): The search term.
-   - **Return:** A list of recent news articles.
-
 ### Ticker Information
 
-1. **`get_ticker_info`**
-   - **Description:** Retrieves a comprehensive report for a given ticker symbol, including company overview, key metrics, important dates, recent analyst recommendations, and upgrades/downgrades.
+1. **`get_ticker_data`**
+   - **Description:** Retrieves a comprehensive report for a given ticker symbol, including company overview, news, key metrics, performance, dates, analyst recommendations, and upgrades/downgrades.
    - **Input:**
      - `ticker` (string): Stock ticker symbol (e.g., `"AAPL"`).
    - **Return:** A formatted multi-section report.
@@ -123,8 +97,11 @@ To integrate **investor-agent** with an MCP client (for example, Claude Desktop)
 {
   "mcpServers": {
     "investor": {
-        "command": "uvx",
-        "args": ["investor-agent"]
+        "command": "path/to/uvx/command/uvx",
+        "args": ["investor-agent"],
+        "env": {
+            "BRAVE_SEARCH_API_KEY": "your_brave_search_api_key_here"
+                }
     }
   }
 }
@@ -154,8 +131,8 @@ For local development and testing:
 {
   "mcpServers": {
     "investor": {
-      "command": "uv",
-      "args": ["--directory", "path/to/investor-agent", "run", "investor-agent"]
+      "command": "path/to/uv/command/uv",
+      "args": ["--directory", "path/to/investor-agent", "run", "investor-agent"],
     }
   }
 }

@@ -1,193 +1,131 @@
-import os
 import logging
-import sys
 from datetime import datetime
 from typing import Literal
+import sys
 
-from tabulate import tabulate
-from dotenv import load_dotenv
-from brave_search_python_client import (
-    BraveSearch,
-    NewsSearchRequest,
-    WebSearchRequest,
-)
-import yfinance as yf
 import pandas as pd
 from mcp.server.fastmcp import FastMCP
+from tabulate import tabulate
 
+from . import yfinance_utils
 
 logger = logging.getLogger(__name__)
 
-# Load .env file and get Brave Search API key from environment
-load_dotenv()
-if not os.getenv("BRAVE_SEARCH_API_KEY"):
-    msg = "BRAVE_SEARCH_API_KEY not found in environment"
-    raise ValueError(msg)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stderr)]
+)
 
-# Initialize Brave Search client
-brave_search_client = BraveSearch()
 
 # Initialize MCP server
 mcp = FastMCP("Investor-Agent")
 
-@mcp.tool()
-async def web_search(query: str) -> list:
-    """Perform a web search and return results."""
-    response = await brave_search_client.web(WebSearchRequest(q=query))
-    return response.web.results if response.web else []
 
 @mcp.tool()
-async def news_search(query: str) -> list:
-    """Search for news articles and return results."""
-    response = await brave_search_client.news(NewsSearchRequest(q=query))
-    return response.results or []
+def get_ticker_data(ticker: str) -> str:
+    """Get comprehensive report for ticker: overview, news, metrics, performance, dates, analyst recommendations, and upgrades/downgrades."""
+    info = yfinance_utils.get_ticker_info(ticker)
+    if not info:
+        return f"No information available for {ticker}"
 
-# Helper function to get analyst recommendations and upgrades/downgrades
-def get_analyst_data(ticker_obj) -> tuple[list, list]:
-    """
-    Get analyst recommendations and upgrades/downgrades for a ticker.
-    """
-    # Get analyst recommendations
-    recommendations = ticker_obj.recommendations
-    recent_recommendations = (
-        recommendations.tail(5).to_dict("records")
-        if recommendations is not None and not recommendations.empty
-        else []
-    )
+    sections = []
 
-    # Get upgrades/downgrades
-    upgrades = ticker_obj.upgrades_downgrades
-    recent_upgrades = (
-        upgrades.tail(5).to_dict("records")
-        if upgrades is not None and not upgrades.empty
-        else []
-    )
+    # Company overview
+    overview = [
+        ["Company Name", info.get('longName', 'N/A')],
+        ["Sector", info.get('sector', 'N/A')],
+        ["Industry", info.get('industry', 'N/A')],
+        ["Market Cap", f"${info.get('marketCap', 0):,.2f}" if info.get('marketCap') else "N/A"],
+        ["Employees", f"{info.get('fullTimeEmployees', 0):,}" if info.get('fullTimeEmployees') else "N/A"],
+        ["Beta", f"{info.get('beta', 0):.2f}" if info.get('beta') else "N/A"]
+    ]
+    sections.extend(["COMPANY OVERVIEW", tabulate(overview, tablefmt="plain")])
 
-    return recent_recommendations, recent_upgrades
+    # Key metrics
+    metrics = [
+        ["Current Price", f"${info.get('currentPrice', 0):.2f}" if info.get('currentPrice') else "N/A"],
+        ["52-Week Range", f"${info.get('fiftyTwoWeekLow', 0):.2f} - ${info.get('fiftyTwoWeekHigh', 0):.2f}" if info.get('fiftyTwoWeekLow') and info.get('fiftyTwoWeekHigh') else "N/A"],
+        ["Market Cap", f"${info.get('marketCap', 0):,.2f}" if info.get('marketCap') else "N/A"],
+        ["Trailing P/E", info.get('trailingPE', 'N/A')],
+        ["Forward P/E", info.get('forwardPE', 'N/A')],
+        ["PEG Ratio", info.get('trailingPegRatio', 'N/A')],
+        ["Price/Book", f"{info.get('priceToBook', 0):.2f}" if info.get('priceToBook') else "N/A"],
+        ["Dividend Yield", f"{info.get('dividendYield', 0)*100:.2f}%" if info.get('dividendYield') else "N/A"],
+        ["Short % of Float", f"{info.get('shortPercentOfFloat', 0)*100:.2f}%" if info.get('shortPercentOfFloat') else "N/A"]
+    ]
+    sections.extend(["\nKEY METRICS", tabulate(metrics, tablefmt="plain")])
 
-# Helper function to get important dates
-def get_important_dates(ticker_obj) -> list[list[str]]:
-    """Get important upcoming dates for a ticker."""
-    try:
-        calendar = ticker_obj.calendar
-        if not calendar:
-            return []
+    # Performance metrics
+    performance = [
+        ["Return on Equity", f"{info.get('returnOnEquity', 0)*100:.2f}%" if info.get('returnOnEquity') else "N/A"],
+        ["Return on Assets", f"{info.get('returnOnAssets', 0)*100:.2f}%" if info.get('returnOnAssets') else "N/A"],
+        ["Profit Margin", f"{info.get('profitMargins', 0)*100:.2f}%" if info.get('profitMargins') else "N/A"],
+        ["Operating Margin", f"{info.get('operatingMargins', 0)*100:.2f}%" if info.get('operatingMargins') else "N/A"],
+        ["Debt to Equity", f"{info.get('debtToEquity', 0):.2f}" if info.get('debtToEquity') else "N/A"],
+        ["Current Ratio", f"{info.get('currentRatio', 0):.2f}" if info.get('currentRatio') else "N/A"]
+    ]
+    sections.extend(["\nPERFORMANCE METRICS", tabulate(performance, tablefmt="plain")])
 
-        formatted_events = []
-        for event_type, date in calendar.items():
-            if pd.notnull(date):
-                formatted_date = (
-                    date.strftime("%Y-%m-%d")
-                    if isinstance(date, pd.Timestamp)
-                    else str(date)
-                )
-                formatted_events.append([event_type, formatted_date])
+    # Analyst coverage
+    analyst = [
+        ["Analyst Count", str(info.get('numberOfAnalystOpinions', 'N/A'))],
+        ["Mean Target", f"${info.get('targetMeanPrice', 0):.2f}" if info.get('targetMeanPrice') else "N/A"],
+        ["High Target", f"${info.get('targetHighPrice', 0):.2f}" if info.get('targetHighPrice') else "N/A"],
+        ["Low Target", f"${info.get('targetLowPrice', 0):.2f}" if info.get('targetLowPrice') else "N/A"],
+        ["Recommendation", info.get('recommendationKey', 'N/A').title()]
+    ]
+    sections.extend(["\nANALYST COVERAGE", tabulate(analyst, tablefmt="plain")])
 
-        return formatted_events
-    except Exception as e:
-        logger.warning(f"Failed to get important dates: {e}")
-        return []
+    # Calendar dates
+    if calendar := yfinance_utils.get_calendar(ticker):
+        dates_data = []
+        for key, value in calendar.items():
+            if isinstance(value, datetime):
+                dates_data.append([key, value.strftime("%Y-%m-%d")])
+            elif isinstance(value, list) and all(isinstance(d, datetime) for d in value):
+                start_date = value[0].strftime("%Y-%m-%d")
+                end_date = value[1].strftime("%Y-%m-%d")
+                dates_data.append([key, f"{start_date}-{end_date}"])
 
-@mcp.tool()
-async def get_ticker_info(ticker: str) -> str:
-    """
-    Get a comprehensive report for a given ticker symbol.
+        if dates_data:
+            sections.extend(["\nIMPORTANT DATES", tabulate(dates_data, headers=["Event", "Date"], tablefmt="plain")])
 
-    Args:
-        ticker (str): Stock ticker symbol (e.g., 'AAPL')
-
-    Returns:
-        str: Formatted report containing sections:
-            - Company Overview (name, sector, industry, market cap)
-            - Key Metrics (price, P/E ratio, forward P/E, PEG ratio, dividend yield)
-            - Important Dates (upcoming events)
-            - Recent Analyst Recommendations (if available)
-            - Recent Upgrades/Downgrades (if available)
-    """
-    try:
-        ticker_obj = yf.Ticker(ticker)
-        info = ticker_obj.info
-        if not info:
-            return f"No information available for {ticker}"
-
-        try:
-            recent_recommendations, recent_upgrades = get_analyst_data(ticker_obj)
-            important_dates = get_important_dates(ticker_obj)
-        except Exception as e:
-            logger.warning(f"Failed to get additional data for {ticker}: {e}")
-            recent_recommendations, recent_upgrades = [], []
-            important_dates = []
-
-        sections = ["COMPANY OVERVIEW"]
-
-        # Use DataFrame for company overview
-        overview_data = [
-            ["Company Name", info.get("longName", "N/A")],
-            ["Sector", info.get("sector", "N/A")],
-            ["Industry", info.get("industry", "N/A")],
+    # Recent recommendations
+    if (recommendations := yfinance_utils.get_recommendations(ticker)) is not None and not recommendations.empty:
+        rec_data = [
             [
-                "Market Cap",
-                f"${info.get('marketCap', 0):,.2f}"
-                if info.get("marketCap")
-                else "N/A",
-            ],
+                f"{period}",  # period is the index (e.g., '0m', '-1m', etc.)
+                f"{row['strongBuy']} Strong Buy, {row['buy']} Buy, "
+                f"{row['hold']} Hold, {row['sell']} Sell, "
+                f"{row['strongSell']} Strong Sell"
+            ]
+            for period, row in recommendations.iterrows()
+            if not all(pd.isna(val) for val in row.values)
         ]
-        overview_df = pd.DataFrame(overview_data, columns=["Field", "Value"])
-        sections.append(tabulate(overview_df, headers="keys", tablefmt="grid", showindex=False))
+        if rec_data:
+            sections.extend(["\nRECENT ANALYST RECOMMENDATIONS",
+                           tabulate(rec_data, headers=["Period", "Distribution"], tablefmt="plain")])
 
-        # Key Metrics section as DataFrame
-        key_metrics_data = [
+    # Recent upgrades/downgrades
+    if (upgrades := yfinance_utils.get_upgrades_downgrades(ticker)) is not None and not upgrades.empty:
+        upg_data = [
             [
-                "Current Price",
-                f"${info.get('currentPrice', 0):.2f}" if info.get("currentPrice") else "N/A",
-            ],
-            ["P/E Ratio", f"{info.get('peRatio', 'N/A')}"],
-            ["Forward P/E", f"{info.get('forwardPE', 'N/A')}"],
-            ["PEG Ratio", f"{info.get('pegRatio', 'N/A')}"],
-            [
-                "Dividend Yield",
-                f"{info.get('dividendYield', 0)*100:.2f}%" if info.get("dividendYield") else "N/A",
-            ],
+                pd.to_datetime(row.name).strftime('%Y-%m-%d'),
+                row.get('Firm', 'N/A'),
+                f"{row.get('FromGrade', 'N/A')} → {row.get('ToGrade', 'N/A')}"
+            ]
+            for _, row in upgrades.iterrows()
+            if not all(pd.isna(val) for val in row.values)
         ]
-        metrics_df = pd.DataFrame(key_metrics_data, columns=["Metric", "Value"])
-        sections.extend(["\nKEY METRICS", tabulate(metrics_df, headers="keys", tablefmt="grid", showindex=False)])
+        if upg_data:
+            sections.extend(["\nRECENT UPGRADES/DOWNGRADES",
+                           tabulate(upg_data, headers=["Date", "Firm", "Change"], tablefmt="plain")])
 
-        # Important Dates section using DataFrame if available
-        if important_dates:
-            dates_df = pd.DataFrame(important_dates, columns=["Event", "Date"])
-            sections.extend(["\nIMPORTANT DATES", tabulate(dates_df, headers="keys", tablefmt="grid", showindex=False)])
-
-        # Recent Analyst Recommendations using DataFrame if available
-        if recent_recommendations:
-            rec_df = pd.DataFrame(recent_recommendations)
-            desired_cols = ["date", "firm", "toGrade", "fromGrade", "action"]
-            rec_df = rec_df[[col for col in desired_cols if col in rec_df.columns]]
-            sections.extend(
-                [
-                    "\nRECENT ANALYST RECOMMENDATIONS",
-                    tabulate(rec_df, headers="keys", tablefmt="grid", showindex=False),
-                ]
-            )
-
-        # Recent Upgrades/Downgrades using DataFrame if available
-        if recent_upgrades:
-            upg_df = pd.DataFrame(recent_upgrades)
-            desired_cols = ["date", "firm", "toGrade", "fromGrade", "action"]
-            upg_df = upg_df[[col for col in desired_cols if col in upg_df.columns]]
-            sections.extend(
-                [
-                    "\nRECENT UPGRADES/DOWngrades".upper(),
-                    tabulate(upg_df, headers="keys", tablefmt="grid", showindex=False),
-                ]
-            )
-
-        return "\n".join(sections)
-
-    except Exception as e:
-        return f"Error retrieving investment report for {ticker}: {str(e)}"
+    return "\n".join(sections)
 
 @mcp.tool()
-async def get_available_options(
+def get_available_options(
     ticker_symbol: str,
     num_options: int = 10,
     start_date: str | None = None,
@@ -196,300 +134,155 @@ async def get_available_options(
     strike_upper: float | None = None,
     option_type: Literal["C", "P"] | None = None,
 ) -> str:
-    """
-    Get a list of stock options with highest open interest for a given ticker symbol.
+    """Get options with highest open interest. Dates: YYYY-MM-DD. Type: C=calls, P=puts."""
+    df, error = yfinance_utils.get_filtered_options(
+        ticker_symbol, start_date, end_date, strike_lower, strike_upper, option_type
+    )
+    if error:
+        return error
 
-    Args:
-        ticker_symbol (str): Stock ticker symbol (e.g., 'AAPL')
-        num_options (int, optional): Number of options to return. Defaults to 10
-        start_date (str | None, optional): Start date in YYYY-MM-DD format
-        end_date (str | None, optional): End date in YYYY-MM-DD format
-        strike_lower (float | None, optional): Minimum strike price
-        strike_upper (float | None, optional): Maximum strike price
-        option_type (str | None, optional): Option type ('C' for calls, 'P' for puts, None for both)
-    """
-    try:
-        ticker_obj = yf.Ticker(ticker_symbol)
-        if not ticker_obj.options:
-            return f"No options available for {ticker_symbol}"
-
-        start = datetime.strptime(start_date, "%Y-%m-%d").date() if start_date else None
-        end = datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else None
-
-        expiry_dates = [
-            date
-            for date in ticker_obj.options
-            if (not start or datetime.strptime(date, "%Y-%m-%d").date() >= start)
-            and (not end or datetime.strptime(date, "%Y-%m-%d").date() <= end)
+    options_data = [
+        [
+            "C" if "C" in row['contractSymbol'] else "P",
+            f"${row['strike']:.2f}",
+            row['expiryDate'],
+            int(row['openInterest']) if pd.notnull(row['openInterest']) else 0,
+            int(row['volume']) if pd.notnull(row['volume']) and row['volume'] > 0 else "N/A",
+            f"{row['impliedVolatility']*100:.1f}%" if pd.notnull(row['impliedVolatility']) else "N/A"
         ]
-        if not expiry_dates:
-            return f"No options found for {ticker_symbol} in specified date range"
+        for _, row in df.head(num_options).iterrows()
+    ]
 
-        option_chains = [ticker_obj.option_chain(date) for date in expiry_dates]
-        # Collect DataFrames based on option type
-        option_dfs = []
-        for chain in option_chains:
-            if option_type == "C":
-                option_dfs.append(chain.calls)
-            elif option_type == "P":
-                option_dfs.append(chain.puts)
-            else:
-                option_dfs.extend([chain.calls, chain.puts])
-        df = pd.concat(option_dfs, ignore_index=True)
-        df = df[
-            (df["strike"] >= (strike_lower or -float("inf")))
-            & (df["strike"] <= (strike_upper or float("inf")))
-        ]
-
-        if df.empty:
-            return f"No options found for {ticker_symbol} matching criteria"
-
-        top_options = df.nlargest(num_options, "openInterest").copy()
-
-        # Create formatted columns via vectorized operations
-        top_options["Type"] = top_options["contractSymbol"].apply(lambda x: "C" if "C" in x else "P")
-        top_options["Strike"] = top_options["strike"].apply(lambda x: f"${x:.2f}")
-        top_options["Expiry"] = pd.to_datetime(top_options["lastTradeDate"]).dt.strftime("%Y-%m-%d")
-        top_options["OI"] = top_options["openInterest"].astype(int)
-        top_options["Price"] = ((top_options["ask"] + top_options["bid"]) / 2).apply(lambda x: f"${x:.2f}")
-        top_options["Vol"] = top_options["volume"].apply(lambda x: int(x) if x > 0 else "N/A")
-        top_options["IV%"] = top_options["impliedVolatility"].apply(lambda x: f"{x*100:.1f}%")
-
-        final_df = top_options[["Type", "Strike", "Expiry", "OI", "Price", "Vol", "IV%"]]
-
-        return tabulate(final_df, headers="keys", tablefmt="grid", showindex=False)
-
-    except ValueError as e:
-        return f"Invalid date format. Please use YYYY-MM-DD format: {str(e)}"
-    except Exception as e:
-        return f"Error: {str(e)}"
-
+    return tabulate(options_data, headers=["Type", "Strike", "Expiry", "OI", "Vol", "IV"], tablefmt="plain")
 
 @mcp.tool()
-async def get_price_history(
+def get_price_history(
     ticker: str,
-    period: Literal["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"] = "1mo",
+    period: Literal["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"] = "1mo"
 ) -> str:
-    """
-    Get historical price data for a ticker symbol.
+    """Get historical price data for specified period."""
+    history = yfinance_utils.get_price_history(ticker, period)
+    if history is None or history.empty:
+        return f"No historical data found for {ticker}"
 
-    Args:
-        ticker (str): Stock ticker symbol (e.g., 'AAPL')
-        period (str): Time period. Must be one of:
-            '1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'ytd', 'max'
-    """
-    try:
-        ticker_obj = yf.Ticker(ticker)
-        history = ticker_obj.history(period=period)
+    price_data = [
+        [
+            idx.strftime('%Y-%m-%d'),  # exclude timestamp
+            f"${row['Open']:.2f}",
+            f"${row['Close']:.2f}",
+            f"{row['Volume']:,.0f}",
+            f"${row['Dividends']:.4f}" if row['Dividends'] > 0 else "-",
+            f"{row['Stock Splits']:.0f}:1" if row['Stock Splits'] > 0 else "-"
+        ]
+        for idx, row in history.iterrows()
+    ]
 
-        if history.empty:
-            return f"No historical data found for {ticker}"
-
-        # Reset index to bring Date as a column
-        history = history.reset_index()
-        # Format columns for nicer display
-        history["Date"] = history["Date"].dt.date
-        for col in ["Open", "High", "Low", "Close"]:
-            if col in history.columns:
-                history[col] = history[col].apply(lambda x: f"${x:.2f}")
-        if "Volume" in history.columns:
-            history["Volume"] = history["Volume"].apply(lambda x: f"{x:,.0f}")
-
-        return tabulate(history, headers="keys", tablefmt="grid", showindex=False)
-
-    except Exception as e:
-        return f"Error retrieving price history for {ticker}: {str(e)}"
+    return (f"PRICE HISTORY FOR {ticker} ({period}):\n" +
+            tabulate(price_data, headers=["Date", "Open", "Close", "Volume", "Dividends", "Splits"], tablefmt="plain"))
 
 @mcp.tool()
-async def get_financial_statements(
+def get_financial_statements(
     ticker: str,
     statement_type: Literal["income", "balance", "cash"] = "income",
     frequency: Literal["quarterly", "annual"] = "quarterly",
 ) -> str:
-    """
-    Get financial statements for a ticker symbol.
+    """Get financial statements. Types: income, balance, cash. Frequency: quarterly, annual."""
+    data = yfinance_utils.get_financial_statements(ticker, statement_type, frequency)
 
-    Args:
-        ticker (str): Stock ticker symbol (e.g., 'AAPL')
-        statement_type (str): 'income', 'balance', or 'cash'
-        frequency (str): 'quarterly' or 'annual'
-    """
-    valid_types = ["income", "balance", "cash"]
-    valid_freqs = ["quarterly", "annual"]
+    if data is None or data.empty:
+        return f"No {statement_type} statement data found for {ticker}"
 
-    if statement_type not in valid_types:
-        return f"Invalid statement type. Must be one of: {', '.join(valid_types)}"
-    if frequency not in valid_freqs:
-        return f"Invalid frequency. Must be one of: {', '.join(valid_freqs)}"
+    statement_data = [
+        [metric] + [
+            "N/A" if pd.isna(value) else
+            f"${value/1e9:.1f}B" if abs(value) >= 1e9 else
+            f"${value/1e6:.1f}M"
+            for value in data.loc[metric]
+        ]
+        for metric in data.index
+    ]
 
-    try:
-        ticker_obj = yf.Ticker(ticker)
-        data = {
-            "income": ticker_obj.income_stmt if frequency == "annual" else ticker_obj.quarterly_income_stmt,
-            "balance": ticker_obj.balance_sheet if frequency == "annual" else ticker_obj.quarterly_balance_sheet,
-            "cash": ticker_obj.cashflow if frequency == "annual" else ticker_obj.quarterly_cashflow,
-        }.get(statement_type)
+    headers = ["Metric"] + [date.strftime("%Y-%m-%d") for date in data.columns]
+    title = (f"{frequency.upper()} {statement_type.upper()} STATEMENT FOR {ticker}:\n"
+             "(Values in billions/millions USD)")
 
-        if data is None or data.empty:
-            return f"No {statement_type} statement data found for {ticker}"
-
-        # Format values in the DataFrame (values in millions USD)
-        data_formatted = data.applymap(lambda x: f"${x/1e6:.1f}M" if pd.notnull(x) and isinstance(x, (int, float)) else x)
-        df_formatted = data_formatted.reset_index().rename(columns={"index": "Metric"})
-
-        return (
-            f"{frequency.capitalize()} {statement_type} statement for {ticker}:\n"
-            f"(Values in millions USD)\n\n"
-            f"{tabulate(df_formatted, headers='keys', tablefmt='grid', showindex=False)}"
-        )
-
-    except Exception as e:
-        return f"Error retrieving financial statements for {ticker}: {str(e)}"
+    return title + "\n" + tabulate(statement_data, headers=headers, tablefmt="plain")
 
 @mcp.tool()
-async def get_institutional_holders(ticker: str) -> str:
-    """
-    Get major institutional and mutual fund holders of the stock.
+def get_institutional_holders(ticker: str, top_n: int = 20) -> str:
+    """Get major institutional and mutual fund holders."""
+    inst_holders, fund_holders = yfinance_utils.get_institutional_holders(ticker)
 
-    Args:
-        ticker (str): Stock ticker symbol (e.g., 'AAPL')
+    if (inst_holders is None or inst_holders.empty) and (fund_holders is None or fund_holders.empty):
+        return f"No institutional holder data found for {ticker}"
 
-    Returns:
-        str: Two formatted tables:
-            1. Institutional Holders:
-                - Holder name
-                - Shares held
-                - Value of holding
-                - Percentage held
-                - Date reported
-                - % Change
-            2. Mutual Fund Holders:
-                - Same columns as institutional holders
-    """
-    try:
-        ticker_obj = yf.Ticker(ticker)
+    def format_holder_data(df: pd.DataFrame) -> list:
+        return [
+            [
+                row['Holder'],
+                f"{row['Shares']:,.0f}",
+                f"${row['Value']:,.0f}",
+                f"{row['pctHeld']*100:.2f}%",
+                pd.to_datetime(row['Date Reported']).strftime('%Y-%m-%d'),
+                f"{row['pctChange']*100:+.2f}%" if pd.notnull(row['pctChange']) else "N/A"
+            ]
+            for _, row in df.iterrows()
+        ]
 
-        # Get both institutional and mutual fund holders using get_ methods
-        inst_holders = ticker_obj.get_institutional_holders()
-        fund_holders = ticker_obj.get_mutualfund_holders()
+    headers = ["Holder", "Shares", "Value", "% Held", "Date Reported", "% Change"]
+    sections = []
 
-        if (inst_holders is None or inst_holders.empty) and (fund_holders is None or fund_holders.empty):
-            return f"No institutional holder data found for {ticker}"
+    if inst_holders is not None and not inst_holders.empty:
+        sections.extend(["INSTITUTIONAL HOLDERS:",
+                        tabulate(format_holder_data(inst_holders), headers=headers, tablefmt="plain")])
 
-        sections = []
+    if fund_holders is not None and not fund_holders.empty:
+        sections.extend(["\nMUTUAL FUND HOLDERS:",
+                        tabulate(format_holder_data(fund_holders), headers=headers, tablefmt="plain")])
 
-        if inst_holders is not None and not inst_holders.empty:
-            inst_df = inst_holders.copy()
-            inst_df["Shares"] = inst_df["Shares"].apply(lambda x: f"{x:,.0f}")
-            inst_df["Value"] = inst_df["Value"].apply(lambda x: f"${x:,.0f}")
-            inst_df["pctHeld"] = inst_df["pctHeld"].apply(lambda x: f"{x*100:.2f}%")  # Convert to percentage
-            inst_df["Date Reported"] = pd.to_datetime(inst_df["Date Reported"]).dt.strftime("%Y-%m-%d")
-            inst_df["pctChange"] = inst_df["pctChange"].apply(lambda x: f"{x*100:+.2f}%" if pd.notnull(x) else "N/A")  # Add + sign and convert to percentage
-            
-            # Rename columns for better readability
-            inst_df = inst_df.rename(columns={
-                "Holder": "Institution",
-                "pctHeld": "% Held",
-                "pctChange": "% Change"
-            })
-            
-            sections.append("INSTITUTIONAL HOLDERS")
-            sections.append(tabulate(inst_df, headers="keys", tablefmt="grid", showindex=False))
-
-        if fund_holders is not None and not fund_holders.empty:
-            fund_df = fund_holders.copy()
-            fund_df["Shares"] = fund_df["Shares"].apply(lambda x: f"{x:,.0f}")
-            fund_df["Value"] = fund_df["Value"].apply(lambda x: f"${x:,.0f}")
-            fund_df["pctHeld"] = fund_df["pctHeld"].apply(lambda x: f"{x*100:.2f}%")  # Convert to percentage
-            fund_df["Date Reported"] = pd.to_datetime(fund_df["Date Reported"]).dt.strftime("%Y-%m-%d")
-            fund_df["pctChange"] = fund_df["pctChange"].apply(lambda x: f"{x*100:+.2f}%" if pd.notnull(x) else "N/A")  # Add + sign and convert to percentage
-            
-            # Rename columns for better readability
-            fund_df = fund_df.rename(columns={
-                "Holder": "Fund",
-                "pctHeld": "% Held",
-                "pctChange": "% Change"
-            })
-            
-            sections.append("\nMUTUAL FUND HOLDERS")
-            sections.append(tabulate(fund_df, headers="keys", tablefmt="grid", showindex=False))
-
-        return "\n".join(sections)
-
-    except Exception as e:
-        return f"Error retrieving institutional holders for {ticker}: {str(e)}"
+    return "\n".join(sections)
 
 @mcp.tool()
-async def get_earnings_history(ticker: str) -> str:
-    """
-    Retrieve and format the earnings history for a given ticker symbol.
+def get_earnings_history(ticker: str) -> str:
+    """Get earnings history with estimates and surprises."""
+    earnings_history = yfinance_utils.get_earnings_history(ticker)
 
-    Args:
-        ticker (str): Ticker symbol (e.g., 'MSFT').
+    if earnings_history is None or earnings_history.empty:
+        return f"No earnings history data found for {ticker}"
 
-    Returns:
-        str: A formatted table of earnings history data.
-    """
-    try:
-        ticker_obj = yf.Ticker(ticker)
-        earnings_history = ticker_obj.earnings_history
+    earnings_data = [
+        [
+            date.strftime('%Y-%m-%d'),
+            f"${row['epsEstimate']:.2f}" if pd.notnull(row['epsEstimate']) else "N/A",
+            f"${row['epsActual']:.2f}" if pd.notnull(row['epsActual']) else "N/A",
+            f"${row['epsDifference']:.2f}" if pd.notnull(row['epsDifference']) else "N/A",
+            f"{row['surprisePercent']:.1f}%" if pd.notnull(row['surprisePercent']) else "N/A"
+        ]
+        for date, row in earnings_history.iterrows()
+    ]
 
-        if earnings_history.empty:
-            return f"No earnings history data found for {ticker}"
-
-        earnings_history = earnings_history.reset_index()
-        return tabulate(earnings_history, headers="keys", tablefmt="grid", showindex=False)
-
-    except Exception as e:
-        return f"Error retrieving earnings history for {ticker}: {str(e)}"
+    return (f"EARNINGS HISTORY FOR {ticker}:\n" +
+            tabulate(earnings_data, headers=["Date", "EPS Est", "EPS Act", "Surprise", "Surprise %"], tablefmt="plain"))
 
 @mcp.tool()
-async def get_insider_trades(ticker: str) -> str:
-    """
-    Get recent insider trading activity.
+def get_insider_trades(ticker: str) -> str:
+    """Get recent insider trading activity."""
+    trades = yfinance_utils.get_insider_trades(ticker)
 
-    Args:
-        ticker (str): Stock ticker symbol (e.g., 'AAPL')
+    if trades is None or trades.empty:
+        return f"No insider trading data found for {ticker}"
 
-    Returns:
-        str: Formatted table of insider trades with columns:
-            - Date: Transaction date
-            - Insider: Name of insider
-            - Title: Position/title of insider
-            - Transaction: Type of transaction
-            - Shares: Number of shares
-            - Value: Transaction value in USD
-    """
-    try:
-        trades = yf.Ticker(ticker).insider_transactions
+    trades_data = [
+        [
+            pd.to_datetime(row['Start Date']).strftime('%Y-%m-%d'),
+            row.get('Insider', 'N/A'),
+            row.get('Position', 'N/A'),
+            row.get('Transaction', 'N/A'),
+            f"{row.get('Shares', 0):,.0f}",
+            f"${row.get('Value', 0):,.0f}" if pd.notnull(row.get('Value')) else "N/A"
+        ]
+        for _, row in trades.iterrows()
+    ]
 
-        if trades is None or trades.empty:
-            return f"No insider trading data found for {ticker}"
-
-        trades = trades.reset_index().rename(columns={"index": "Date"})
-        trades["Date"] = pd.to_datetime(trades["Date"]).dt.strftime("%Y-%m-%d")
-        if "Shares" in trades.columns:
-            trades["Shares"] = trades["Shares"].apply(lambda x: f"{x:,.0f}")
-        if "Value" in trades.columns:
-            trades["Value"] = trades["Value"].apply(lambda x: f"${x:,.0f}")
-
-        # Reorder columns if necessary
-        columns_order = ["Date", "Insider", "Title", "Transaction", "Shares", "Value"]
-        trades = trades[[col for col in columns_order if col in trades.columns]]
-
-        return (
-            f"Recent insider trades for {ticker}:\n\n"
-            f"{tabulate(trades, headers='keys', tablefmt='grid', showindex=False)}"
-        )
-
-    except Exception as e:
-        return f"Error retrieving insider trades for {ticker}: {str(e)}"
-
-
-def main():
-    try:
-        logger.info("Running investor agent server...")
-        mcp.run()
-    except Exception as e:
-        logger.error(f"Error in running server: {e}")
-        sys.exit(1)
+    return (f"INSIDER TRADES FOR {ticker}:\n" +
+            tabulate(trades_data, headers=["Date", "Insider", "Title", "Transaction", "Shares", "Value"], tablefmt="plain"))
