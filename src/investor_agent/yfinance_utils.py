@@ -28,7 +28,7 @@ def get_ticker_info(ticker: str) -> dict | None:
     try:
         return yf.Ticker(ticker, session=session).get_info()
     except Exception as e:
-        logger.error(f"Error retrieving ticker info for {ticker}: {e}")
+        logger.error(f"Error retrieving ticker info for {ticker}: {e}", exc_info=True)
         return None
 
 def get_calendar(ticker: str) -> dict | None:
@@ -36,7 +36,7 @@ def get_calendar(ticker: str) -> dict | None:
     try:
         return yf.Ticker(ticker, session=session).get_calendar()
     except Exception as e:
-        logger.error(f"Error retrieving calendar for {ticker}: {e}")
+        logger.error(f"Error retrieving calendar for {ticker}: {e}", exc_info=True)
         return None
 
 def get_recommendations(ticker: str, limit: int = 5) -> pd.DataFrame | None:
@@ -158,6 +158,19 @@ def get_filtered_options(
 ) -> tuple[pd.DataFrame | None, str | None]:
     """Get filtered options data efficiently."""
     try:
+        # Validate date formats before processing
+        if start_date:
+            try:
+                datetime.strptime(start_date, "%Y-%m-%d")
+            except ValueError:
+                return None, f"Invalid start_date format. Use YYYY-MM-DD"
+                
+        if end_date:
+            try:
+                datetime.strptime(end_date, "%Y-%m-%d")
+            except ValueError:
+                return None, f"Invalid end_date format. Use YYYY-MM-DD"
+
         t = yf.Ticker(ticker, session=session)
         expirations = t.options
 
@@ -212,4 +225,4 @@ def get_filtered_options(
 
     except Exception as e:
         logger.error(f"Error in get_filtered_options: {str(e)}", exc_info=True)
-        return None, str(e)
+        return None, f"Failed to retrieve options data: {str(e)}"

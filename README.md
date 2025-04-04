@@ -11,7 +11,9 @@ The **investor-agent** is a Model Context Protocol (MCP) server that provides co
 - Up-to-date institutional ownership and mutual fund holdings.
 - Earnings history and insider trading activity.
 
-The server integrates with [yfinance](https://pypi.org/project/yfinance/) for market data retrieval and [BraveSearch](https://pypi.org/project/brave-search-python-client/) for search capabilities.
+The server integrates with [yfinance](https://pypi.org/project/yfinance/) for market data retrieval.
+
+Combine this with an MCP server for placing trades on a brokerage platform such as [tasty-agent](https://github.com/ferdousbhai/tasty-agent) to place trades on tastytrade platform. Make sure to also enable web search functionality if you would like to incoporate latest news in your analysis.
 
 ## Prerequisites
 
@@ -99,9 +101,6 @@ To integrate **investor-agent** with an MCP client (for example, Claude Desktop)
     "investor": {
         "command": "path/to/uvx/command/uvx",
         "args": ["investor-agent"],
-        "env": {
-            "BRAVE_SEARCH_API_KEY": "your_brave_search_api_key_here"
-                }
     }
   }
 }
