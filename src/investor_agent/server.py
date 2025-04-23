@@ -300,3 +300,22 @@ def get_insider_trades(ticker: str) -> str:
 
     return (f"INSIDER TRADES FOR {ticker}:\n" +
             tabulate(trades_data, headers=["Date", "Insider", "Title", "Transaction", "Shares", "Value"], tablefmt="plain"))
+
+@mcp.prompt()
+def investment_principles() -> str:
+    """Provides a set of core investment principles and guidelines."""
+    return """
+Here are some core investment principles to consider:
+
+*   Play for meaningful stakes.
+*   Resist the allure of diversification. Invest in ventures that are genuinely interesting.
+*   When the ship starts to sink, jump.
+*   Never hesitate to abandon a venture if something more attractive comes into view.
+*   Nobody knows the future.
+*   Prices of stocks go up or down because of what people are feeling, thinking and doing. Not due to any easy-to-quantify measure.
+*   History does *not* necessarily repeat itself. Ignore patterns on the chart.
+*   Disregard what everybody says until I've thought through myself.
+*   Don't average down a bad trade.
+*   Instead of attempting to organize affairs to accommodate unknowable events far in the future, react to events as they unfold in the present.
+*   Every investment should be reevaluated every 3 months or so. Would I put my money into this if it were presented to me for the first time today? Is it progressing toward the ending position I envisioned?
+"""
