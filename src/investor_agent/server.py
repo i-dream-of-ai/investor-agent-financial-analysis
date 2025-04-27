@@ -319,3 +319,43 @@ Here are some core investment principles to consider:
 *   Instead of attempting to organize affairs to accommodate unknowable events far in the future, react to events as they unfold in the present.
 *   Every investment should be reevaluated every 3 months or so. Would I put my money into this if it were presented to me for the first time today? Is it progressing toward the ending position I envisioned?
 """
+
+@mcp.prompt()
+async def portfolio_construction_prompt() -> str:
+    """Outlines a portfolio construction strategy that uses tail-hedging via married put."""
+    return """
+1. Analyze my current portfolio allocation, focusing on:
+   - Asset classes (stocks, bonds, etc.)
+   - Market exposure and correlation
+   - Historical performance during normal markets and downturns
+   - Current volatility and drawdown risk
+
+2. Design a core portfolio that:
+   - Maintains exposure to market growth
+   - Aligns with my risk tolerance and time horizon
+   - Uses low-cost index funds or ETFs where appropriate
+
+3. Develop a tail-hedge component that:
+   - Allocates ~3% of the portfolio to tail-risk protection. Example: Married put strategy, in which you buy 3-month puts with strike 15% below current price.
+   - Identifies suitable put options on relevant market indices
+   - Specifies strike prices, expiration dates, and position sizing
+   - Estimates cost of implementation and maintenance
+
+4. Provide a rebalancing strategy that:
+   - Details when to reset hedge positions
+   - Explains how to redeploy gains from successful hedges
+   - Accounts for time decay of options
+
+5. Include metrics to evaluate effectiveness:
+   - Expected performance in various market scenarios
+   - Impact on long-term CAGR compared to unhedged portfolio
+   - Estimated reduction in volatility and maximum drawdown
+
+6. Outline implementation steps with:
+   - Specific securities or instruments to use
+   - Timing considerations for establishing positions
+   - Potential tax implications
+
+Please use the tools available to you to perform your analysis and to construct the portfolio. If you're missing any information, ask the user for more details.
+Explain your reasoning at each step, focusing on reducing the "volatility tax" while maintaining growth potential.
+"""
