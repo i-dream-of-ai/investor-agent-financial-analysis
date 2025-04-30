@@ -9,9 +9,11 @@ The **investor-agent** is a Model Context Protocol (MCP) server that provides co
 - Historical price trends for stocks.
 - Essential financial statements (income, balance sheet, cash flow) formatted in millions USD.
 - Up-to-date institutional ownership and mutual fund holdings.
+- Current and historical CNN Fear & Greed Index data and trend analysis.
+- Prompts related to core investment principles and portfolio construction strategies.
 - Earnings history and insider trading activity.
 
-The server integrates with [yfinance](https://pypi.org/project/yfinance/) for market data retrieval.
+The server integrates with [yfinance](https://pypi.org/project/yfinance/) for market data retrieval and fetches Fear & Greed data from CNN.
 
 Combine this with an MCP server for placing trades on a brokerage platform such as [tasty-agent](https://github.com/ferdousbhai/tasty-agent) to place trades on tastytrade platform. Make sure to also enable web search functionality if you would like to incoporate latest news in your analysis.
 
@@ -90,6 +92,37 @@ The **investor-agent** server comes with several tools to support financial anal
    - **Input:**
      - `ticker` (string): Stock ticker symbol.
    - **Return:** A formatted table showing insider trades.
+
+### CNN Fear & Greed Index Tools
+
+1. **`get_current_fng_tool`**
+   - **Description:** Retrieves the current CNN Fear & Greed Index score, rating, and classification.
+   - **Inputs:** None
+   - **Return:** A string containing the current index details.
+
+2. **`get_historical_fng_tool`**
+   - **Description:** Fetches historical CNN Fear & Greed Index data for a specified number of days.
+   - **Inputs:**
+     - `days` (int): Number of days of historical data to retrieve.
+   - **Return:** A string listing historical scores and classifications.
+
+3. **`analyze_fng_trend`**
+   - **Description:** Analyzes the trend of the CNN Fear & Greed Index over a specified number of days.
+   - **Inputs:**
+     - `days` (int): Number of days to include in the trend analysis.
+   - **Return:** A summary string including the latest value, average, range, trend direction, and classification.
+
+### Informational Prompts
+
+1. **`investment_principles`**
+   - **Description:** Provides a set of core investment principles and guidelines.
+   - **Inputs:** None
+   - **Return:** A string outlining several investment principles.
+
+2. **`portfolio_construction_prompt`**
+   - **Description:** Outlines a portfolio construction strategy incorporating tail-hedging.
+   - **Inputs:** None
+   - **Return:** A detailed prompt guiding the construction of a hedged portfolio.
 
 ## Usage with MCP Clients
 

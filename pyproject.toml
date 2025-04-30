@@ -1,10 +1,11 @@
 [project]
 name = "investor-agent"
-version = "0.1.4"
+version = "0.1.5"
 description = "A Model Context Protocol server for an investor agent"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "httpx>=0.28.1",
     "mcp[cli]>=1.2.1",
     "pyrate-limiter>=2.10.0",
     "requests-cache>=1.2.1",
