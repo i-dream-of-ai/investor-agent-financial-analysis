@@ -174,25 +174,57 @@ def get_price_history(
     ticker: str,
     period: Literal["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"] = "1mo"
 ) -> str:
-    """Get historical price data for specified period."""
+    """Get historical price data. Shows daily data for up to 1 year, monthly aggregated data for longer periods."""
     history = yfinance_utils.get_price_history(ticker, period)
     if history is None or history.empty:
         return f"No historical data found for {ticker}"
 
-    price_data = [
-        [
-            idx.strftime('%Y-%m-%d'),  # exclude timestamp
-            f"${row['Open']:.2f}",
-            f"${row['Close']:.2f}",
-            f"{row['Volume']:,.0f}",
-            f"${row['Dividends']:.4f}" if row['Dividends'] > 0 else "-",
-            f"{row['Stock Splits']:.0f}:1" if row['Stock Splits'] > 0 else "-"
-        ]
-        for idx, row in history.iterrows()
-    ]
+    short_periods = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "ytd"]
+    title_suffix = f"({period})"
 
-    return (f"PRICE HISTORY FOR {ticker} ({period}):\n" +
-            tabulate(price_data, headers=["Date", "Open", "Close", "Volume", "Dividends", "Splits"], tablefmt="plain"))
+    if period in short_periods:
+        # Format daily data for short periods
+        price_data = [
+            [
+                idx.strftime('%Y-%m-%d'),
+                f"${row['Open']:.2f}",
+                f"${row['Close']:.2f}",
+                f"{row['Volume']:,.0f}",
+                f"${row['Dividends']:.4f}" if row['Dividends'] > 0 else "-",
+                f"{row['Stock Splits']:.0f}:1" if row['Stock Splits'] > 0 else "-"
+            ]
+            for idx, row in history.iterrows()
+        ]
+        headers = ["Date", "Open", "Close", "Volume", "Dividends", "Splits"]
+        title = f"DAILY PRICE HISTORY FOR {ticker} {title_suffix}"
+
+    else:
+        # Aggregate to monthly for longer periods
+        history.index = pd.to_datetime(history.index) # Ensure index is datetime
+        # Resample to Month Start frequency
+        monthly_history = history.resample('MS').agg({
+            'Open': 'first',
+            'Close': 'last',
+            'Volume': 'sum'
+        }).dropna() # Drop rows where aggregation results in NaN (e.g., months with no trading days)
+
+        if monthly_history.empty:
+             return f"No aggregated monthly data found for {ticker} for period {period}"
+
+        price_data = [
+            [
+                idx.strftime('%Y-%m'),  # Format as Year-Month
+                f"${row['Open']:.2f}",
+                f"${row['Close']:.2f}",
+                f"{row['Volume']:,.0f}"
+            ]
+            for idx, row in monthly_history.iterrows()
+        ]
+        headers = ["Month", "Open", "Close", "Volume"]
+        title = f"MONTHLY AGGREGATED PRICE HISTORY FOR {ticker} {title_suffix}"
+
+
+    return title + "\n" + tabulate(price_data, headers=headers, tablefmt="plain")
 
 @mcp.tool()
 def get_financial_statements(
