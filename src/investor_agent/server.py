@@ -4,6 +4,7 @@ from typing import Literal
 import sys
 
 import pandas as pd
+import talib
 from mcp.server.fastmcp import FastMCP
 from tabulate import tabulate
 
@@ -19,7 +20,7 @@ logging.basicConfig(
 )
 
 # Initialize MCP server
-mcp = FastMCP("Investor-Agent", dependencies=["yfinance", "httpx", "pandas"])
+mcp = FastMCP("Investor-Agent", dependencies=["yfinance", "httpx", "pandas", "TA-Lib"])
 
 
 @mcp.tool()
@@ -330,8 +331,134 @@ def get_insider_trades(ticker: str) -> str:
         for _, row in trades.iterrows()
     ]
 
-    return (f"INSIDER TRADES FOR {ticker}:\n" +
+    return (f"INSIDER TRADES FOR {ticker}:\\n" +
             tabulate(trades_data, headers=["Date", "Insider", "Title", "Transaction", "Shares", "Value"], tablefmt="plain"))
+
+@mcp.tool()
+def calculate_technical_indicator(
+    ticker: str,
+    indicator: Literal["SMA", "EMA", "RSI", "MACD", "BBANDS"],
+    period: Literal["1mo", "3mo", "6mo", "1y", "2y", "5y"] = "1y",
+    timeperiod: int = 14,  # Default timeperiod for SMA, EMA, RSI
+    fastperiod: int = 12,  # Default for MACD fast EMA
+    slowperiod: int = 26,  # Default for MACD slow EMA
+    signalperiod: int = 9,   # Default for MACD signal line
+    nbdevup: int = 2,      # Default upper deviation for BBANDS
+    nbdevdn: int = 2,      # Default lower deviation for BBANDS
+    matype: int = 0,       # Default MA type for BBANDS (0=SMA)
+    num_results: int = 10  # Number of recent results to display
+) -> str:
+    """
+    Calculates a specified technical indicator (SMA, EMA, RSI, MACD, BBANDS) for a ticker.
+    Uses daily closing prices for the calculation over the specified historical `period`.
+    Displays the most recent `num_results` calculated values.
+
+    Args:
+        ticker: The stock ticker symbol.
+        indicator: The technical indicator to calculate.
+        period: The historical data period to fetch (e.g., "1y", "2y"). Longer periods provide more context for calculation.
+        timeperiod: The lookback period for SMA, EMA, RSI.
+        fastperiod: The fast EMA period for MACD.
+        slowperiod: The slow EMA period for MACD.
+        signalperiod: The signal line EMA period for MACD.
+        nbdevup: The number of standard deviations for the upper Bollinger Band.
+        nbdevdn: The number of standard deviations for the lower Bollinger Band.
+        matype: The type of moving average for Bollinger Bands (0=SMA, 1=EMA, etc.). See TA-Lib docs for details.
+        num_results: How many of the most recent indicator results to return.
+    """
+    try:
+        # Fetch sufficient historical data (use the provided period, ensuring it's daily)
+        history = yfinance_utils.get_price_history(ticker, period=period)
+        if history is None or history.empty:
+            return f"No historical data found for {ticker} for period {period}."
+        if 'Close' not in history.columns:
+             return f"Historical data for {ticker} is missing the 'Close' price."
+
+        close_prices = history['Close'].values # Use numpy array for TA-Lib
+
+        # Ensure enough data for the calculation
+        required_data_points = {
+            "SMA": timeperiod,
+            "EMA": timeperiod,
+            "RSI": timeperiod + 1, # RSI needs one extra point
+            "MACD": slowperiod + signalperiod, # Approx requirement
+            "BBANDS": timeperiod # Period for the MA calculation within BBANDS
+        }
+        min_required = required_data_points.get(indicator, timeperiod) # Default to timeperiod if indicator not mapped
+        if len(close_prices) < min_required:
+            return (f"Insufficient data for {indicator} calculation ({len(close_prices)} points found, "
+                    f"at least {min_required} needed for period {period}). Try a longer period.")
+
+
+        indicator_result = None
+        headers = ["Date", "Close"]
+        indicator_output = []
+
+        if indicator == "SMA":
+            indicator_result = talib.SMA(close_prices, timeperiod=timeperiod)
+            headers.append(f"SMA({timeperiod})")
+        elif indicator == "EMA":
+            indicator_result = talib.EMA(close_prices, timeperiod=timeperiod)
+            headers.append(f"EMA({timeperiod})")
+        elif indicator == "RSI":
+            indicator_result = talib.RSI(close_prices, timeperiod=timeperiod)
+            headers.append(f"RSI({timeperiod})")
+        elif indicator == "MACD":
+            # MACD returns macd, macdsignal, macdhist
+            macd, macdsignal, macdhist = talib.MACD(close_prices, fastperiod=fastperiod, slowperiod=slowperiod, signalperiod=signalperiod)
+            # Combine results; ensure they are aligned with history index
+            indicator_output = list(zip(macd, macdsignal, macdhist))
+            headers.extend([f"MACD({fastperiod},{slowperiod})", f"Signal({signalperiod})", "Hist"])
+        elif indicator == "BBANDS":
+             # BBANDS returns upperband, middleband, lowerband
+            upper, middle, lower = talib.BBANDS(close_prices, timeperiod=timeperiod, nbdevup=nbdevup, nbdevdn=nbdevdn, matype=matype)
+            indicator_output = list(zip(upper, middle, lower))
+            headers.extend([f"UpperBB({timeperiod},{nbdevup})", f"MiddleBB({timeperiod})", f"LowerBB({timeperiod},{nbdevdn})"])
+        else:
+            return f"Indicator '{indicator}' not supported."
+
+        # Combine results with dates and close prices, handling NaNs from TA-Lib's initial calculations
+        results_table = []
+        start_index = -min(num_results, len(history)) # Index to start slicing for recent results
+
+        # For single output indicators
+        if indicator_result is not None:
+             indicator_output = list(zip(indicator_result)) # Make it iterable like multi-output
+
+        # Iterate backwards from the end of the data to get the most recent N valid results
+        count = 0
+        for i in range(len(history) - 1, -1, -1):
+            if count >= num_results:
+                break
+
+            # Check if *any* indicator value for this row is NaN
+            # indicator_output contains tuples of floats/NaNs
+            current_indicator_values = indicator_output[i]
+            if any(pd.isna(val) for val in current_indicator_values):
+                continue # Skip rows with NaNs in the indicator results
+
+            date_str = history.index[i].strftime('%Y-%m-%d')
+            close_val = f"${history['Close'].iloc[i]:.2f}"
+            formatted_indicators = [f"{val:.2f}" for val in current_indicator_values]
+
+            results_table.append([date_str, close_val] + formatted_indicators)
+            count += 1
+
+        if not results_table:
+             return f"Could not calculate {indicator} for {ticker}. Check parameters or try a longer period."
+
+        # Reverse the table to show oldest first (within the N results)
+        results_table.reverse()
+
+        title = f"RECENT {indicator} VALUES FOR {ticker} (Last {len(results_table)} days)"
+        return title + "\\n" + tabulate(results_table, headers=headers, tablefmt="plain")
+
+    except Exception as e:
+        logger.error(f"Error calculating indicator {indicator} for {ticker}: {e}")
+        # Consider logging the traceback for detailed debugging
+        # import traceback
+        # logger.error(traceback.format_exc())
+        return f"Failed to calculate {indicator} for {ticker}: {str(e)}"
 
 @mcp.prompt()
 def investment_principles() -> str:

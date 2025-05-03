@@ -22,6 +22,14 @@ Combine this with an MCP server for placing trades on a brokerage platform such 
 - **Python:** 3.12 or higher
 - **Package Manager:** [uv](https://docs.astral.sh/uv/)
 
+### External Dependencies (TA-Lib C Library)
+
+To use the technical analysis tools (`calculate_technical_indicator`), you need the underlying TA-Lib C library installed on your system first. Follow the official installation directions for your platform:
+
+[https://ta-lib.org/install/](https://ta-lib.org/install/)
+
+After installing the C library, the Python wrapper (`TA-Lib`) will be installed automatically when you run the agent via `uvx` or during development setup.
+
 ## Installation
 
 First, install **uv** if you haven't already:
@@ -111,6 +119,24 @@ The **investor-agent** server comes with several tools to support financial anal
    - **Inputs:**
      - `days` (int): Number of days to include in the trend analysis.
    - **Return:** A summary string including the latest value, average, range, trend direction, and classification.
+
+### Technical Analysis Tools
+
+1. **`calculate_technical_indicator`**
+   - **Description:** Calculates a specified technical indicator (SMA, EMA, RSI, MACD, BBANDS) for a ticker using daily closing prices over a given historical period.
+   - **Inputs:**
+     - `ticker` (string): Stock ticker symbol (e.g., `"AAPL"`).
+     - `indicator` (string): The indicator to calculate. Choose from `"SMA"`, `"EMA"`, `"RSI"`, `"MACD"`, `"BBANDS"`.
+     - `period` (string, optional): Historical data period (e.g., `"1y"`, default: `"1y"`). Choose from `"1mo"`, `"3mo"`, `"6mo"`, `"1y"`, `"2y"`, `"5y"`.
+     - `timeperiod` (int, optional): Lookback period for SMA, EMA, RSI, BBANDS (default: 14).
+     - `fastperiod` (int, optional): Fast EMA period for MACD (default: 12).
+     - `slowperiod` (int, optional): Slow EMA period for MACD (default: 26).
+     - `signalperiod` (int, optional): Signal line EMA period for MACD (default: 9).
+     - `nbdevup` (int, optional): Upper standard deviation multiplier for BBANDS (default: 2).
+     - `nbdevdn` (int, optional): Lower standard deviation multiplier for BBANDS (default: 2).
+     - `matype` (int, optional): Moving average type for BBANDS (default: 0 for SMA). See TA-Lib docs.
+     - `num_results` (int, optional): Number of recent results to display (default: 10).
+   - **Return:** A formatted table showing the most recent calculated indicator values alongside dates and closing prices.
 
 ### Informational Prompts
 
