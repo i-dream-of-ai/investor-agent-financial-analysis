@@ -4,7 +4,15 @@ from typing import Literal
 import sys
 
 import pandas as pd
+# Removed conditional import - TA-Lib is now required
 import talib
+# try:
+#     import talib
+#     _talib_available = True
+# except ImportError:
+#     _talib_available = False
+#     # Optional: Log a warning that TA-Lib is not installed
+#     # logger.warning("TA-Lib library not found. Technical indicator features will be disabled.")
 from mcp.server.fastmcp import FastMCP
 from tabulate import tabulate
 
@@ -20,6 +28,7 @@ logging.basicConfig(
 )
 
 # Initialize MCP server
+# Added "TA-Lib" back - it is required
 mcp = FastMCP("Investor-Agent", dependencies=["yfinance", "httpx", "pandas", "TA-Lib"])
 
 
@@ -366,6 +375,12 @@ def calculate_technical_indicator(
         matype: The type of moving average for Bollinger Bands (0=SMA, 1=EMA, etc.). See TA-Lib docs for details.
         num_results: How many of the most recent indicator results to return.
     """
+    # Removed check for _talib_available
+    # if not _talib_available:
+    #     return ("Error: TA-Lib library not installed or found. "
+    #             "Please install the TA-Lib C library and the 'TA-Lib' Python package "
+    #             "to use technical analysis tools. See README for instructions.")
+
     try:
         # Fetch sufficient historical data (use the provided period, ensuring it's daily)
         history = yfinance_utils.get_price_history(ticker, period=period)

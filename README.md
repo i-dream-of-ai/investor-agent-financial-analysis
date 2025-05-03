@@ -12,6 +12,7 @@ The **investor-agent** is a Model Context Protocol (MCP) server that provides co
 - Current and historical CNN Fear & Greed Index data and trend analysis.
 - Prompts related to core investment principles and portfolio construction strategies.
 - Earnings history and insider trading activity.
+- Technical indicator calculations (SMA, EMA, RSI, MACD, BBANDS).
 
 The server integrates with [yfinance](https://pypi.org/project/yfinance/) for market data retrieval and fetches Fear & Greed data from CNN.
 
@@ -24,11 +25,11 @@ Combine this with an MCP server for placing trades on a brokerage platform such 
 
 ### External Dependencies (TA-Lib C Library)
 
-To use the technical analysis tools (`calculate_technical_indicator`), you need the underlying TA-Lib C library installed on your system first. Follow the official installation directions for your platform:
+To use this agent, especially the `calculate_technical_indicator` tool, you need the underlying TA-Lib C library installed on your system *before* running the agent for the first time.
+
+Follow the official installation directions for your platform:
 
 [https://ta-lib.org/install/](https://ta-lib.org/install/)
-
-After installing the C library, the Python wrapper (`TA-Lib`) will be installed automatically when you run the agent via `uvx` or during development setup.
 
 ## Installation
 
@@ -56,7 +57,7 @@ The **investor-agent** server comes with several tools to support financial anal
      - `ticker` (string): Stock ticker symbol (e.g., `"AAPL"`).
    - **Return:** A formatted multi-section report.
 
-2. **`get_available_options`**
+2. **`get_options`**
    - **Description:** Provides a list of stock options with the highest open interest.
    - **Inputs:**
      - `ticker_symbol` (string): Stock ticker symbol.
