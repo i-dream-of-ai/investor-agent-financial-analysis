@@ -2,48 +2,55 @@
 
 ## Overview
 
-The **investor-agent** is a Model Context Protocol (MCP) server that provides comprehensive financial insights and analysis to Large Language Models. It leverages real-time market data, news, and advanced analytics to help users obtain:
+The **investor-agent** is a Model Context Protocol (MCP) server that provides comprehensive financial insights and analysis to Large Language Models. It leverages real-time market data, fundamental and technical analysis to help users obtain:
 
 - Detailed ticker reports including company overview, news, key metrics, performance, dates, analyst recommendations, and upgrades/downgrades.
 - Options data highlighting high open interest.
 - Historical price trends for stocks.
-- Essential financial statements (income, balance sheet, cash flow) formatted in millions USD.
+- Essential financial statements (income, balance sheet, cash flow).
 - Up-to-date institutional ownership and mutual fund holdings.
-- Current and historical CNN Fear & Greed Index data and trend analysis.
-- Prompts related to core investment principles and portfolio construction strategies.
 - Earnings history and insider trading activity.
+- Current and historical CNN Fear & Greed Index data and trend analysis.
 - Technical indicator calculations (SMA, EMA, RSI, MACD, BBANDS).
+- Prompts related to core investment principles and portfolio construction strategies.
 
-The server integrates with [yfinance](https://pypi.org/project/yfinance/) for market data retrieval and fetches Fear & Greed data from CNN.
+The server integrates with [yfinance](https://pypi.org/project/yfinance/) for market data retrieval and fetches Fear & Greed data from CNN. It automatically caches `yfinance` API responses for an hour in a local `yfinance.cache` file to improve performance and reduce redundant API calls.
 
 Combine this with an MCP server for placing trades on a brokerage platform such as [tasty-agent](https://github.com/ferdousbhai/tasty-agent) to place trades on tastytrade platform. Make sure to also enable web search functionality if you would like to incoporate latest news in your analysis.
 
 ## Prerequisites
 
 - **Python:** 3.12 or higher
-- **Package Manager:** [uv](https://docs.astral.sh/uv/)
+- **Package Manager:** [uv](https://docs.astral.sh/uv/). Install if you haven't:
 
-### External Dependencies (TA-Lib C Library)
+  ```bash
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  ```
 
-To use this agent, especially the `calculate_technical_indicator` tool, you need the underlying TA-Lib C library installed on your system *before* running the agent for the first time.
+### Optional: TA-Lib C Library
 
-Follow the official installation directions for your platform:
-
-[https://ta-lib.org/install/](https://ta-lib.org/install/)
+- Required if you need the `calculate_technical_indicator` tool. Follow the [official installation instructions](https://ta-lib.org/install/) for your operating system.
 
 ## Installation
 
-First, install **uv** if you haven't already:
+### Quick Start (Run without Installing)
+
+The easiest way to run the agent is using `uvx`, which fetches and runs the package without installing it globally or in a specific environment:
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Then, you can run the **investor-agent** MCP server using `uvx`:
-
-```bash
+# Run with core features only
 uvx investor-agent
 ```
+
+If you need the `calculate_technical_indicator` tool (and have the prerequisite [TA-Lib C Library](#optional-ta-lib-c-library) installed), you can include the optional dependencies:
+
+```bash
+# Run with technical indicator features included
+uvx "investor-agent[ta]"
+```
+
+*Note: Using `uvx "package[extra]"` requires a recent version of `uv` (0.7.0 or later).*
+*Note: Using `uvx` with `[ta]` requires the TA-Lib C library to be properly installed and discoverable on your system beforehand.*
 
 ## Tools
 
@@ -124,7 +131,7 @@ The **investor-agent** server comes with several tools to support financial anal
 ### Technical Analysis Tools
 
 1. **`calculate_technical_indicator`**
-   - **Description:** Calculates a specified technical indicator (SMA, EMA, RSI, MACD, BBANDS) for a ticker using daily closing prices over a given historical period.
+   - **Description:** Calculates a specified technical indicator (SMA, EMA, RSI, MACD, BBANDS) for a ticker using daily closing prices over a given historical period. **Requires optional `ta` installation.**
    - **Inputs:**
      - `ticker` (string): Stock ticker symbol (e.g., `"AAPL"`).
      - `indicator` (string): The indicator to calculate. Choose from `"SMA"`, `"EMA"`, `"RSI"`, `"MACD"`, `"BBANDS"`.
@@ -178,24 +185,6 @@ For log monitoring, check the following directories:
 
 - macOS: `~/Library/Logs/Claude/mcp*.log`
 - Windows: `%APPDATA%\Claude\logs\mcp*.log`
-
-## Development
-
-For local development and testing:
-
-1. Use the MCP inspector as described in the [Debugging](#debugging) section.
-2. Test using Claude Desktop with this configuration:
-
-```json
-{
-  "mcpServers": {
-    "investor": {
-      "command": "path/to/uv/command/uv",
-      "args": ["--directory", "path/to/investor-agent", "run", "investor-agent"],
-    }
-  }
-}
-```
 
 ## License
 

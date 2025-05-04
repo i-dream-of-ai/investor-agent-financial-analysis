@@ -1,6 +1,6 @@
 [project]
 name = "investor-agent"
-version = "0.1.6"
+version = "0.1.7"
 description = "A Model Context Protocol server for an investor agent"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -10,7 +10,6 @@ dependencies = [
     "pyrate-limiter>=2.10.0",
     "requests-cache>=1.2.1",
     "requests-ratelimiter>=0.7.0",
-    "ta-lib>=0.6.3",
     "tabulate>=0.9.0",
     "yfinance[nospam]>=0.2.54",
 ]
@@ -25,6 +24,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "License :: OSI Approved :: MIT License",
 ]
+
+[project.optional-dependencies]
+ta = ["ta-lib>=0.6.3"]
 
 [project.scripts]
 investor-agent = "src.investor_agent.server:mcp.run"
