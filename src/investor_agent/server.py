@@ -4,7 +4,6 @@ from typing import Literal
 import sys
 
 import pandas as pd
-#import talib (optional)
 try:
     import talib
     _ta_available = True
@@ -24,10 +23,8 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stderr)]
 )
 
-# Initialize MCP server
-# Added "TA-Lib" back - it is required
-# mcp = FastMCP("Investor-Agent", dependencies=["yfinance", "httpx", "pandas", "TA-Lib"])
-mcp = FastMCP("Investor-Agent", dependencies=["yfinance", "httpx", "pandas"]) # TA-Lib is now optional
+
+mcp = FastMCP("Investor-Agent", dependencies=["yfinance", "httpx", "pandas"]) # TA-Lib is optional
 
 
 @mcp.tool()
@@ -213,8 +210,13 @@ def get_price_history(
         monthly_history = history.resample('MS').agg({
             'Open': 'first',
             'Close': 'last',
-            'Volume': 'sum'
-        }).dropna() # Drop rows where aggregation results in NaN (e.g., months with no trading days)
+            'Volume': 'sum',
+            'Dividends': 'sum',
+            'Stock Splits': lambda x: x[x > 0].prod() # Calculate the product of splits > 0; prod of empty series is 1.0 (no split)
+        }).dropna(subset=['Open', 'Close'], how='all') # Drop months if all price/vol data is missing
+
+        # Fill NaN splits with 1.0 (representing no split) AFTER aggregation
+        monthly_history['Stock Splits'].fillna(1.0, inplace=True)
 
         if monthly_history.empty:
              return f"No aggregated monthly data found for {ticker} for period {period}"
@@ -222,13 +224,16 @@ def get_price_history(
         price_data = [
             [
                 idx.strftime('%Y-%m'),  # Format as Year-Month
-                f"${row['Open']:.2f}",
-                f"${row['Close']:.2f}",
-                f"{row['Volume']:,.0f}"
+                f"${row['Open']:.2f}" if pd.notnull(row['Open']) else "-",
+                f"${row['Close']:.2f}" if pd.notnull(row['Close']) else "-",
+                f"{row['Volume']:,.0f}" if pd.notnull(row['Volume']) and row['Volume'] > 0 else "-",
+                f"${row['Dividends']:.4f}" if row['Dividends'] > 0 else "-",
+                # Format split ratio if it's not 1.0 (meaning a net split occurred)
+                f"{row['Stock Splits']:.1f}:1" if row['Stock Splits'] != 1.0 else "-"
             ]
             for idx, row in monthly_history.iterrows()
         ]
-        headers = ["Month", "Open", "Close", "Volume"]
+        headers = ["Month", "Open", "Close", "Volume", "Dividends", "Splits"] # Update headers
         title = f"MONTHLY AGGREGATED PRICE HISTORY FOR {ticker} {title_suffix}"
 
 
@@ -350,8 +355,7 @@ def calculate_technical_indicator(
     fastperiod: int = 12,  # Default for MACD fast EMA
     slowperiod: int = 26,  # Default for MACD slow EMA
     signalperiod: int = 9,   # Default for MACD signal line
-    nbdevup: int = 2,      # Default upper deviation for BBANDS
-    nbdevdn: int = 2,      # Default lower deviation for BBANDS
+    nbdev: int = 2,        # Default standard deviation for BBANDS (up and down)
     matype: int = 0,       # Default MA type for BBANDS (0=SMA)
     num_results: int = 10  # Number of recent results to display
 ) -> str:
@@ -364,12 +368,11 @@ def calculate_technical_indicator(
         ticker: The stock ticker symbol.
         indicator: The technical indicator to calculate.
         period: The historical data period to fetch (e.g., "1y", "2y"). Longer periods provide more context for calculation.
-        timeperiod: The lookback period for SMA, EMA, RSI.
+        timeperiod: The lookback period for SMA, EMA, RSI, and the MA within BBANDS.
         fastperiod: The fast EMA period for MACD.
         slowperiod: The slow EMA period for MACD.
         signalperiod: The signal line EMA period for MACD.
-        nbdevup: The number of standard deviations for the upper Bollinger Band.
-        nbdevdn: The number of standard deviations for the lower Bollinger Band.
+        nbdev: The number of standard deviations for the upper and lower Bollinger Bands.
         matype: The type of moving average for Bollinger Bands (0=SMA, 1=EMA, etc.). See TA-Lib docs for details.
         num_results: How many of the most recent indicator results to return.
     """
@@ -427,9 +430,9 @@ def calculate_technical_indicator(
             headers.extend([f"MACD({fastperiod},{slowperiod})", f"Signal({signalperiod})", "Hist"])
         elif indicator == "BBANDS":
              # BBANDS returns upperband, middleband, lowerband
-            upper, middle, lower = talib.BBANDS(close_prices, timeperiod=timeperiod, nbdevup=nbdevup, nbdevdn=nbdevdn, matype=matype)
+            upper, middle, lower = talib.BBANDS(close_prices, timeperiod=timeperiod, nbdevup=nbdev, nbdevdn=nbdev, matype=matype)
             indicator_output = list(zip(upper, middle, lower))
-            headers.extend([f"UpperBB({timeperiod},{nbdevup})", f"MiddleBB({timeperiod})", f"LowerBB({timeperiod},{nbdevdn})"])
+            headers.extend([f"UpperBB({timeperiod},{nbdev})", f"MiddleBB({timeperiod})", f"LowerBB({timeperiod},{nbdev})"])
         else:
             return f"Indicator '{indicator}' not supported."
 
@@ -470,9 +473,7 @@ def calculate_technical_indicator(
 
     except Exception as e:
         logger.error(f"Error calculating indicator {indicator} for {ticker}: {e}")
-        # Consider logging the traceback for detailed debugging
-        # import traceback
-        # logger.error(traceback.format_exc())
+
         return f"Failed to calculate {indicator} for {ticker}: {str(e)}"
 
 @mcp.prompt()
@@ -488,10 +489,10 @@ Here are some core investment principles to consider:
 *   Nobody knows the future.
 *   Prices of stocks go up or down because of what people are feeling, thinking and doing. Not due to any easy-to-quantify measure.
 *   History does *not* necessarily repeat itself. Ignore patterns on the chart.
-*   Disregard what everybody says until I've thought through myself.
+*   Disregard what everybody says until you've thought through yourself.
 *   Don't average down a bad trade.
 *   Instead of attempting to organize affairs to accommodate unknowable events far in the future, react to events as they unfold in the present.
-*   Every investment should be reevaluated every 3 months or so. Would I put my money into this if it were presented to me for the first time today? Is it progressing toward the ending position I envisioned?
+*   Every investment should be reevaluated every 3 months or so. Would you put my money into this if it were presented to you for the first time today? Is it progressing toward the ending position you envisioned?
 """
 
 @mcp.prompt()
