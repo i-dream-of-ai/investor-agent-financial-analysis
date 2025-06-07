@@ -11,6 +11,7 @@ except ImportError:
     _ta_available = False
 from mcp.server.fastmcp import FastMCP
 from tabulate import tabulate
+from yfinance.exceptions import YFRateLimitError
 
 from . import yfinance_utils
 from . import cnn_fng_utils
@@ -113,7 +114,7 @@ def get_ticker_data(ticker: str) -> str:
             ]
             if rec_data:
                 sections.extend(["\nRECENT ANALYST RECOMMENDATIONS",
-                               tabulate(rec_data, 
+                               tabulate(rec_data,
                                       headers=["Period", "Strong Buy", "Buy", "Hold", "Sell", "Strong Sell"],
                                       tablefmt="plain")])
 
@@ -180,9 +181,16 @@ def get_price_history(
     period: Literal["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"] = "1mo"
 ) -> str:
     """Get historical price data. Shows daily data for up to 1 year, monthly aggregated data for longer periods."""
-    history = yfinance_utils.get_price_history(ticker, period)
-    if history is None or history.empty:
-        return f"No historical data found for {ticker}"
+    try:
+        history = yfinance_utils.get_price_history(ticker, period)
+        if history is None or history.empty:
+            return f"No historical data found for {ticker}. This could be due to an invalid ticker, recently delisted stock, or data provider issues."
+    except YFRateLimitError:
+        logger.warning(f"Rate limited while retrieving price history for {ticker}")
+        return f"Yahoo Finance is currently rate limiting requests. Please try again in a few minutes. Ticker: {ticker}"
+    except Exception as e:
+        logger.error(f"Error retrieving price history for {ticker}: {e}")
+        return f"Failed to retrieve price history for {ticker}: {str(e)}"
 
     short_periods = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "ytd"]
     title_suffix = f"({period})"
@@ -205,18 +213,19 @@ def get_price_history(
 
     else:
         # Aggregate to monthly for longer periods
-        history.index = pd.to_datetime(history.index) # Ensure index is datetime
+        if not isinstance(history.index, pd.DatetimeIndex):
+            history.index = pd.to_datetime(history.index)
         # Resample to Month Start frequency
         monthly_history = history.resample('MS').agg({
             'Open': 'first',
             'Close': 'last',
             'Volume': 'sum',
             'Dividends': 'sum',
-            'Stock Splits': lambda x: x[x > 0].prod() # Calculate the product of splits > 0; prod of empty series is 1.0 (no split)
+            'Stock Splits': lambda x: x.prod() if len(x[x != 0]) > 0 else 1.0
         }).dropna(subset=['Open', 'Close'], how='all') # Drop months if all price/vol data is missing
 
         # Fill NaN splits with 1.0 (representing no split) AFTER aggregation
-        monthly_history['Stock Splits'].fillna(1.0, inplace=True)
+        monthly_history['Stock Splits'] = monthly_history['Stock Splits'].fillna(1.0)
 
         if monthly_history.empty:
              return f"No aggregated monthly data found for {ticker} for period {period}"
@@ -229,7 +238,7 @@ def get_price_history(
                 f"{row['Volume']:,.0f}" if pd.notnull(row['Volume']) and row['Volume'] > 0 else "-",
                 f"${row['Dividends']:.4f}" if row['Dividends'] > 0 else "-",
                 # Format split ratio if it's not 1.0 (meaning a net split occurred)
-                f"{row['Stock Splits']:.1f}:1" if row['Stock Splits'] != 1.0 else "-"
+                f"{abs(row['Stock Splits']):.1f}:1" if row['Stock Splits'] != 1.0 else "-"
             ]
             for idx, row in monthly_history.iterrows()
         ]
@@ -261,7 +270,7 @@ def get_financial_statements(
         for metric in data.index
     ]
 
-    headers = ["Metric"] + [date.strftime("%Y-%m-%d") for date in data.columns]
+    headers = ["Metric"] + [date.strftime("%Y-%m-%d") if hasattr(date, 'strftime') else str(date) for date in data.columns]
     title = (f"{frequency.upper()} {statement_type.upper()} STATEMENT FOR {ticker}:\n"
              "(Values in billions/millions USD)")
 
@@ -270,7 +279,7 @@ def get_financial_statements(
 @mcp.tool()
 def get_institutional_holders(ticker: str, top_n: int = 20) -> str:
     """Get major institutional and mutual fund holders."""
-    inst_holders, fund_holders = yfinance_utils.get_institutional_holders(ticker)
+    inst_holders, fund_holders = yfinance_utils.get_institutional_holders(ticker, top_n)
 
     if (inst_holders is None or inst_holders.empty) and (fund_holders is None or fund_holders.empty):
         return f"No institutional holder data found for {ticker}"
@@ -282,7 +291,7 @@ def get_institutional_holders(ticker: str, top_n: int = 20) -> str:
                 f"{row['Shares']:,.0f}",
                 f"${row['Value']:,.0f}",
                 f"{row['pctHeld']*100:.2f}%",
-                pd.to_datetime(row['Date Reported']).strftime('%Y-%m-%d'),
+                pd.to_datetime(row['Date Reported']).strftime('%Y-%m-%d') if pd.notnull(row['Date Reported']) else 'N/A',
                 f"{row['pctChange']*100:+.2f}%" if pd.notnull(row['pctChange']) else "N/A"
             ]
             for _, row in df.iterrows()
@@ -299,15 +308,29 @@ def get_institutional_holders(ticker: str, top_n: int = 20) -> str:
         sections.extend(["\nMUTUAL FUND HOLDERS:",
                         tabulate(format_holder_data(fund_holders), headers=headers, tablefmt="plain")])
 
-    return "\n".join(sections)
+    try:
+        return "\n".join(sections)
+    except YFRateLimitError:
+        logger.warning(f"Rate limited while retrieving institutional holders for {ticker}")
+        return f"Yahoo Finance is currently rate limiting requests. Please try again in a few minutes. Ticker: {ticker}"
+    except Exception as e:
+        logger.error(f"Error getting institutional holders for {ticker}: {e}")
+        return f"Failed to retrieve institutional holders for {ticker}: {str(e)}"
 
 @mcp.tool()
 def get_earnings_history(ticker: str) -> str:
     """Get earnings history with estimates and surprises."""
-    earnings_history = yfinance_utils.get_earnings_history(ticker)
+    try:
+        earnings_history = yfinance_utils.get_earnings_history(ticker)
 
-    if earnings_history is None or earnings_history.empty:
-        return f"No earnings history data found for {ticker}"
+        if earnings_history is None or earnings_history.empty:
+            return f"No earnings history data found for {ticker}. This could be due to an invalid ticker or data provider issues."
+    except YFRateLimitError:
+        logger.warning(f"Rate limited while retrieving earnings history for {ticker}")
+        return f"Yahoo Finance is currently rate limiting requests. Please try again in a few minutes. Ticker: {ticker}"
+    except Exception as e:
+        logger.error(f"Error retrieving earnings history for {ticker}: {e}")
+        return f"Failed to retrieve earnings history for {ticker}: {str(e)}"
 
     earnings_data = [
         [
@@ -326,14 +349,21 @@ def get_earnings_history(ticker: str) -> str:
 @mcp.tool()
 def get_insider_trades(ticker: str) -> str:
     """Get recent insider trading activity."""
-    trades = yfinance_utils.get_insider_trades(ticker)
+    try:
+        trades = yfinance_utils.get_insider_trades(ticker)
 
-    if trades is None or trades.empty:
-        return f"No insider trading data found for {ticker}"
+        if trades is None or trades.empty:
+            return f"No insider trading data found for {ticker}. This could be due to an invalid ticker or data provider issues."
+    except YFRateLimitError:
+        logger.warning(f"Rate limited while retrieving insider trades for {ticker}")
+        return f"Yahoo Finance is currently rate limiting requests. Please try again in a few minutes. Ticker: {ticker}"
+    except Exception as e:
+        logger.error(f"Error retrieving insider trades for {ticker}: {e}")
+        return f"Failed to retrieve insider trades for {ticker}: {str(e)}"
 
     trades_data = [
         [
-            pd.to_datetime(row['Start Date']).strftime('%Y-%m-%d'),
+            pd.to_datetime(row['Start Date']).strftime('%Y-%m-%d') if pd.notnull(row['Start Date']) else 'N/A',
             row.get('Insider', 'N/A'),
             row.get('Position', 'N/A'),
             row.get('Transaction', 'N/A'),
@@ -343,7 +373,7 @@ def get_insider_trades(ticker: str) -> str:
         for _, row in trades.iterrows()
     ]
 
-    return (f"INSIDER TRADES FOR {ticker}:\\n" +
+    return (f"INSIDER TRADES FOR {ticker}:\n" +
             tabulate(trades_data, headers=["Date", "Insider", "Title", "Transaction", "Shares", "Value"], tablefmt="plain"))
 
 @mcp.tool()
@@ -382,8 +412,10 @@ def calculate_technical_indicator(
         if not _ta_available:
             return (
                 "Error: The 'calculate_technical_indicator' tool requires the optional TA-Lib library.\n"
-                "Please install the C library (https://ta-lib.org/install/)\n"
-                "and then run with:  uvx add investor-agent[ta]"
+                "Installation instructions:\n"
+                "1. Install the TA-Lib C library: https://ta-lib.org/install/\n"
+                "2. Install the Python wrapper: uv add ta-lib\n"
+                "Alternative: Use 'uvx investor-agent[ta]' for automatic installation"
             )
 
         # Fetch sufficient historical data (use the provided period, ensuring it's daily)
@@ -469,7 +501,7 @@ def calculate_technical_indicator(
         results_table.reverse()
 
         title = f"RECENT {indicator} VALUES FOR {ticker} (Last {len(results_table)} days)"
-        return title + "\\n" + tabulate(results_table, headers=headers, tablefmt="plain")
+        return title + "\n" + tabulate(results_table, headers=headers, tablefmt="plain")
 
     except Exception as e:
         logger.error(f"Error calculating indicator {indicator} for {ticker}: {e}")
@@ -562,8 +594,8 @@ async def get_current_fng() -> str:
 
         # Construct output with proper formatting
         result = (
-            f"CNN Fear & Greed Index (as of {date_str}):\\n"  # Escaped newline
-            f"Score: {current_score}\\n"  # Escaped newline
+            f"CNN Fear & Greed Index (as of {date_str}):\n"
+            f"Score: {current_score}\n"
             f"Rating: {current_rating}"
         )
         return result
@@ -598,7 +630,7 @@ async def get_historical_fng() -> str:
                 classification = cnn_fng_utils.get_classification(int(score))
                 lines.append(f"{date_str}: {score} ({classification})")
 
-        return "\\n".join(lines)  # Corrected join method
+        return "\n".join(lines)
     except Exception as e:
         logger.error(f"Error processing historical Fear & Greed data: {str(e)}")
         return f"Error processing historical Fear & Greed data: {str(e)}"
@@ -635,9 +667,9 @@ async def get_current_fng_tool() -> str:
 
         # Construct output with proper formatting
         result = (
-            f"CNN Fear & Greed Index (as of {date_str}):\\n"  # Escaped newline
-            f"Score: {current_score}\\n"  # Escaped newline
-            f"CNN Rating: {current_rating}\\n"  # Escaped newline
+            f"CNN Fear & Greed Index (as of {date_str}):\n"
+            f"Score: {current_score}\n"
+            f"CNN Rating: {current_rating}\n"
             f"Classification: {score_classification}"
         )
         return result
@@ -688,7 +720,7 @@ async def get_historical_fng_tool(days: int) -> str:
                 classification = cnn_fng_utils.get_classification(score_num)
                 lines.append(f"{date_str}: {score} ({classification})")
 
-        return "\\n".join(lines)  # Corrected join method
+        return "\n".join(lines)
     except Exception as e:
         logger.error(f"Error processing historical Fear & Greed data: {str(e)}")
         return f"Error processing historical Fear & Greed data: {str(e)}"
@@ -781,7 +813,10 @@ async def analyze_fng_trend(days: int) -> str:
             f"Data points analyzed: {len(scores)}"
         ]
 
-        return "\\n".join(result)  # Corrected join method
+        return "\n".join(result)
     except Exception as e:
         logger.error(f"Error analyzing Fear & Greed trend: {str(e)}")
         return f"Error analyzing Fear & Greed trend: {str(e)}"
+
+if __name__ == "__main__":
+    mcp.run()

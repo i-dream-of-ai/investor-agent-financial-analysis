@@ -1,84 +1,115 @@
 from concurrent.futures import ThreadPoolExecutor
 import logging
-from requests import Session
 from typing import Literal
 from datetime import datetime
+import time
+from functools import wraps
 
-from pyrate_limiter import Duration, RequestRate, Limiter
-from requests_cache import CacheMixin, SQLiteCache
-from requests_ratelimiter import LimiterMixin, MemoryQueueBucket
 import yfinance as yf
+from yfinance.exceptions import YFRateLimitError
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Create a session class that combines caching and rate limiting
-class CachedLimiterSession(CacheMixin, LimiterMixin, Session):
-    pass
+def retry_on_rate_limit(max_retries: int = 3, base_delay: float = 5.0, success_delay: float = 1.5):
+    """Decorator to retry function calls on rate limit errors with exponential backoff.
+    
+    Based on 2025 yfinance best practices:
+    - Yahoo Finance has tightened rate limits significantly
+    - Recommended delays: 5s, 15s, 45s for better success rates
+    - Users report that shorter delays (1-2s) are often insufficient
+    - Adding delays after successful calls helps prevent rate limiting
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    result = func(*args, **kwargs)
+                    # Add a small delay after successful requests to prevent rate limiting
+                    if success_delay > 0:
+                        time.sleep(success_delay)
+                    return result
+                except (YFRateLimitError, Exception) as e:
+                    if isinstance(e, YFRateLimitError) or "rate limit" in str(e).lower() or "too many requests" in str(e).lower():
+                        if attempt < max_retries - 1:
+                            # Use longer delays based on 2025 yfinance community recommendations
+                            wait_time = base_delay * (3 ** attempt)  # 5s, 15s, 45s progression
+                            logger.warning(f"Rate limited on attempt {attempt + 1}, waiting {wait_time}s before retry")
+                            time.sleep(wait_time)
+                            continue
+                        else:
+                            logger.error(f"Max retries ({max_retries}) reached for rate limiting")
+                            raise
+                    else:
+                        # For non-rate-limit errors, don't retry
+                        raise
+            return None
+        return wrapper
+    return decorator
 
-# Create a session with rate limiting and caching
-session = CachedLimiterSession(
-    limiter=Limiter(RequestRate(5, Duration.SECOND)),
-    bucket_class=MemoryQueueBucket,
-    backend=SQLiteCache("yfinance.cache", expire_after=3600),
-)
-
+@retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
 def get_ticker_info(ticker: str) -> dict | None:
     try:
-        return yf.Ticker(ticker, session=session).get_info()
+        return yf.Ticker(ticker).get_info()
     except Exception as e:
         logger.error(f"Error retrieving ticker info for {ticker}: {e}", exc_info=True)
         return None
 
+@retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
 def get_calendar(ticker: str) -> dict | None:
     """Get calendar events including earnings and dividend dates."""
     try:
-        return yf.Ticker(ticker, session=session).get_calendar()
+        return yf.Ticker(ticker).get_calendar()
     except Exception as e:
         logger.error(f"Error retrieving calendar for {ticker}: {e}", exc_info=True)
         return None
 
+@retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
 def get_recommendations(ticker: str, limit: int = 5) -> pd.DataFrame | None:
     """Get analyst recommendations.
     Returns DataFrame with columns: Firm, To Grade, From Grade, Action
     Limited to most recent entries by default.
     """
     try:
-        df = yf.Ticker(ticker, session=session).get_recommendations()
+        df = yf.Ticker(ticker).get_recommendations()
         return df.head(limit) if df is not None else None
     except Exception as e:
         logger.error(f"Error retrieving recommendations for {ticker}: {e}")
         return None
 
+@retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
 def get_upgrades_downgrades(ticker: str, limit: int = 5) -> pd.DataFrame | None:
     """Get upgrades/downgrades history.
     Returns DataFrame with columns: firm, toGrade, fromGrade, action
     Limited to most recent entries by default.
     """
     try:
-        df = yf.Ticker(ticker, session=session).get_upgrades_downgrades()
+        df = yf.Ticker(ticker).get_upgrades_downgrades()
         return df.sort_index(ascending=False).head(limit) if df is not None else None
     except Exception as e:
         logger.error(f"Error retrieving upgrades/downgrades for {ticker}: {e}")
         return None
 
+@retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
 def get_price_history(
     ticker: str,
     period: Literal["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"] = "1mo"
 ) -> pd.DataFrame | None:
     try:
-        return yf.Ticker(ticker, session=session).history(period=period)
+        return yf.Ticker(ticker).history(period=period)
     except Exception as e:
         logger.error(f"Error retrieving price history for {ticker}: {e}")
         return None
 
+@retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
 def get_financial_statements(
     ticker: str,
     statement_type: Literal["income", "balance", "cash"] = "income",
     frequency: Literal["quarterly", "annual"] = "quarterly"
 ) -> pd.DataFrame | None:
     try:
-        t = yf.Ticker(ticker, session=session)
+        t = yf.Ticker(ticker)
         statements = {
             "income": {"annual": t.income_stmt, "quarterly": t.quarterly_income_stmt},
             "balance": {"annual": t.balance_sheet, "quarterly": t.quarterly_balance_sheet},
@@ -89,9 +120,10 @@ def get_financial_statements(
         logger.error(f"Error retrieving {frequency} {statement_type} statement for {ticker}: {e}")
         return None
 
+@retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
 def get_institutional_holders(ticker: str, top_n: int = 20) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
     try:
-        t = yf.Ticker(ticker, session=session)
+        t = yf.Ticker(ticker)
         inst = t.get_institutional_holders()
         fund = t.get_mutualfund_holders()
         return (inst.head(top_n) if inst is not None else None,
@@ -100,25 +132,28 @@ def get_institutional_holders(ticker: str, top_n: int = 20) -> tuple[pd.DataFram
         logger.error(f"Error retrieving institutional holders for {ticker}: {e}")
         return None, None
 
+@retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
 def get_earnings_history(ticker: str, limit: int = 12) -> pd.DataFrame | None:
     """Get raw earnings history data.
     Default limit of 12 shows 3 years of quarterly earnings.
     """
     try:
-        df = yf.Ticker(ticker, session=session).get_earnings_history()
+        df = yf.Ticker(ticker).get_earnings_history()
         return df.head(limit) if df is not None else None
     except Exception as e:
         logger.error(f"Error retrieving earnings history for {ticker}: {e}")
         return None
 
+@retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
 def get_insider_trades(ticker: str, limit: int = 30) -> pd.DataFrame | None:
     try:
-        df = yf.Ticker(ticker, session=session).get_insider_transactions()
+        df = yf.Ticker(ticker).get_insider_transactions()
         return df.head(limit) if df is not None else None
     except Exception as e:
         logger.error(f"Error retrieving insider trades for {ticker}: {e}")
         return None
 
+@retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
 def get_options_chain(
     ticker: str,
     expiry: str | None = None,
@@ -135,7 +170,7 @@ def get_options_chain(
         if not expiry:
             return None, "No expiry date provided"
 
-        chain = yf.Ticker(ticker, session=session).option_chain(expiry)
+        chain = yf.Ticker(ticker).option_chain(expiry)
 
         if option_type == "C":
             return chain.calls, None
@@ -147,6 +182,7 @@ def get_options_chain(
         logger.error(f"Error retrieving options chain for {ticker}: {e}")
         return None, str(e)
 
+@retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
 def get_filtered_options(
     ticker: str,
     start_date: str | None = None,
@@ -170,7 +206,7 @@ def get_filtered_options(
             except ValueError:
                 return None, f"Invalid end_date format. Use YYYY-MM-DD"
 
-        t = yf.Ticker(ticker, session=session)
+        t = yf.Ticker(ticker)
         expirations = t.options
 
         if not expirations:
