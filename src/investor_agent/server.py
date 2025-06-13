@@ -5,7 +5,7 @@ import sys
 
 import pandas as pd
 try:
-    import talib
+    import talib  # type: ignore
     _ta_available = True
 except ImportError:
     _ta_available = False
@@ -810,5 +810,11 @@ async def analyze_fng_trend(days: int) -> str:
         logger.error(f"Error analyzing Fear & Greed trend: {str(e)}")
         return f"Error analyzing Fear & Greed trend: {str(e)}"
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for the investor-agent MCP server."""
+    # Let the MCP framework handle argument parsing and server startup
     mcp.run()
+
+
+if __name__ == "__main__":
+    main()

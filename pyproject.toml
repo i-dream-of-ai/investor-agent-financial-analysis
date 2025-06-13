@@ -29,7 +29,7 @@ classifiers = [
 ta = ["ta-lib>=0.6.3"]
 
 [project.scripts]
-investor-agent = "src.investor_agent.server:mcp.run"
+investor-agent = "investor_agent.server:main"
 
 [build-system]
 requires = ["hatchling"]
