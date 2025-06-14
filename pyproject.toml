@@ -1,12 +1,13 @@
 [project]
 name = "investor-agent"
-version = "0.2.1"
+dynamic = ["version"]
 description = "A Model Context Protocol server for an investor agent"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.1",
-    "mcp[cli]>=1.2.1",
+    "mcp[cli]>=1.9.4",
+    "pandas>=2.0.0",
     "pyrate-limiter>=2.10.0",
     "requests-cache>=1.2.1",
     "requests-ratelimiter>=0.7.0",
@@ -29,11 +30,17 @@ classifiers = [
 ta = ["ta-lib>=0.6.3"]
 
 [project.scripts]
-investor-agent = "src.investor_agent.server:main"
+investor-agent = "investor_agent.server:mcp.run"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src"]
+packages = ["investor_agent"]
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "investor_agent/_version.py"
