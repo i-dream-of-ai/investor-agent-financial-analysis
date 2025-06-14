@@ -1,5 +1,5 @@
 **/__pycache__
 .claude
 .venv
-yfinance.cache
 dist
+yfinance.cache
