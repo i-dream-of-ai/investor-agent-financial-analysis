@@ -1,10 +1,5 @@
-.DS_Store
-.claude
-.env
-.venv
 **/__pycache__
+.claude
+.venv
 yfinance.cache
 dist
-*.ipynb
-.cursorrules
-example.py

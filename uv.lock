@@ -246,11 +246,11 @@ wheels = [
 
 [[package]]
 name = "investor-agent"
-version = "0.1.9"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
     { name = "mcp", extra = ["cli"] },
+    { name = "pandas" },
     { name = "pyrate-limiter" },
     { name = "requests-cache" },
     { name = "requests-ratelimiter" },
@@ -266,7 +266,8 @@ ta = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "mcp", extras = ["cli"], specifier = ">=1.2.1" },
+    { name = "mcp", extras = ["cli"], specifier = ">=1.9.4" },
+    { name = "pandas", specifier = ">=2.0.0" },
     { name = "pyrate-limiter", specifier = ">=2.10.0" },
     { name = "requests-cache", specifier = ">=1.2.1" },
     { name = "requests-ratelimiter", specifier = ">=0.7.0" },
