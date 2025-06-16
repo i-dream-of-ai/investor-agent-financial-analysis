@@ -133,6 +133,12 @@ def get_ticker_data(ticker: str) -> str:
                 sections.extend(["\nRECENT UPGRADES/DOWNGRADES",
                                tabulate(upg_data, headers=["Date", "Firm", "Change"], tablefmt="plain")])
 
+        # Get news
+        if news := yfinance_utils.get_news(ticker):
+            # Convert list[dict] -> list[list]
+            news_rows = [[item["date"], item["title"], item["source"]] for item in news]
+            sections.extend(["\nRECENT NEWS", tabulate(news_rows, headers=["Date", "Title", "Source"], tablefmt="plain")])
+
         return "\n".join(sections)
 
     except Exception as e:

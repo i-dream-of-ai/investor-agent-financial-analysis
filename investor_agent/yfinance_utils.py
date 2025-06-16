@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 def retry_on_rate_limit(max_retries: int = 3, base_delay: float = 5.0, success_delay: float = 1.5):
     """Decorator to retry function calls on rate limit errors with exponential backoff.
-    
+
     Based on 2025 yfinance best practices:
     - Yahoo Finance has tightened rate limits significantly
     - Recommended delays: 5s, 15s, 45s for better success rates
@@ -89,6 +89,35 @@ def get_upgrades_downgrades(ticker: str, limit: int = 5) -> pd.DataFrame | None:
         return df.sort_index(ascending=False).head(limit) if df is not None else None
     except Exception as e:
         logger.error(f"Error retrieving upgrades/downgrades for {ticker}: {e}")
+        return None
+
+def get_news(ticker: str, limit: int = 10) -> list[dict] | None:
+    """Return recent news in `[date,title,source,url]` dicts."""
+
+    try:
+        items = yf.Ticker(ticker).get_news()[:limit]
+        if not items:
+            return None
+
+        out: list[dict] = []
+        for it in items:
+            c = it.get("content", {})
+            raw_date = c.get("pubDate") or c.get("displayTime") or ""
+            try:
+                date = datetime.fromisoformat(raw_date.replace("Z", "")).strftime("%Y-%m-%d")
+            except Exception:
+                date = raw_date[:10] if raw_date else "N/A"
+
+            out.append({
+                "date": date,
+                "title": c.get("title") or "Untitled",
+                "source": c.get("provider", {}).get("displayName", "Unknown"),
+                "url": c.get("canonicalUrl", {}).get("url") or c.get("clickThroughUrl", {}).get("url")
+            })
+
+        return out
+    except Exception as e:
+        logger.error(f"get_news({ticker}) error: {e}")
         return None
 
 @retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
@@ -199,7 +228,7 @@ def get_filtered_options(
                 datetime.strptime(start_date, "%Y-%m-%d")
             except ValueError:
                 return None, f"Invalid start_date format. Use YYYY-MM-DD"
-                
+
         if end_date:
             try:
                 datetime.strptime(end_date, "%Y-%m-%d")
