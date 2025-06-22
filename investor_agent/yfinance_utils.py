@@ -123,10 +123,11 @@ def get_news(ticker: str, limit: int = 10) -> list[dict] | None:
 @retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
 def get_price_history(
     ticker: str,
-    period: Literal["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"] = "1mo"
+    period: Literal["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"] = "1mo",
+    interval: Literal["1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo"] = "1d"
 ) -> pd.DataFrame | None:
     try:
-        return yf.Ticker(ticker).history(period=period)
+        return yf.Ticker(ticker).history(period=period, interval=interval)
     except Exception as e:
         logger.error(f"Error retrieving price history for {ticker}: {e}")
         return None

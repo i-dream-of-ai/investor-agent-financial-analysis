@@ -4,172 +4,69 @@
 
 ## Overview
 
-The **investor-agent** is a Model Context Protocol (MCP) server that provides comprehensive financial insights and analysis to Large Language Models. It leverages real-time market data, fundamental and technical analysis to help users obtain:
+The **investor-agent** is a Model Context Protocol (MCP) server that provides comprehensive financial insights and analysis to Large Language Models. It leverages real-time market data, fundamental and technical analysis to deliver:
 
-- Detailed ticker reports including company overview, news, key metrics, performance, dates, analyst recommendations, and upgrades/downgrades.
-- Options data highlighting high open interest.
-- Historical price trends for stocks.
-- Essential financial statements (income, balance sheet, cash flow).
-- Up-to-date institutional ownership and mutual fund holdings.
-- Earnings history and insider trading activity.
-- Current and historical CNN Fear & Greed Index data and trend analysis.
-- Technical indicator calculations (SMA, EMA, RSI, MACD, BBANDS).
-- Prompts related to core investment principles and portfolio construction strategies.
+- **Ticker Analysis:** Company overview, news, metrics, analyst recommendations, and upgrades/downgrades
+- **Options Data:** Filtered options chains with customizable parameters
+- **Historical Data:** Price trends and earnings history
+- **Financial Statements:** Income, balance sheet, and cash flow statements
+- **Ownership Analysis:** Institutional holders and insider trading activity
+- **Market Sentiment:** CNN Fear & Greed Index and Crypto Fear & Greed Index
+- **Technical Analysis:** SMA, EMA, RSI, MACD, BBANDS indicators (optional)
 
-The server integrates with [yfinance](https://pypi.org/project/yfinance/) for market data retrieval and fetches Fear & Greed data from CNN. It automatically caches `yfinance` API responses for an hour in a local `yfinance.cache` file to improve performance and reduce redundant API calls.
-
-Combine this with an MCP server for placing trades on a brokerage platform such as [tasty-agent](https://github.com/ferdousbhai/tasty-agent) to place trades on tastytrade platform. Make sure to also enable web search functionality if you would like to incoporate latest news in your analysis.
+The server integrates with [yfinance](https://pypi.org/project/yfinance/) for market data and automatically optimizes data volume for better performance.
 
 ## Prerequisites
 
 - **Python:** 3.12 or higher
-- **Package Manager:** [uv](https://docs.astral.sh/uv/). Install if you haven't:
-
+- **Package Manager:** [uv](https://docs.astral.sh/uv/). Install if needed:
   ```bash
   curl -LsSf https://astral.sh/uv/install.sh | sh
   ```
 
 ### Optional: TA-Lib C Library
-
-- Required if you need the `calculate_technical_indicator` tool. Follow the [official installation instructions](https://ta-lib.org/install/) for your operating system.
+Required for technical indicators. Follow [official installation instructions](https://ta-lib.org/install/).
 
 ## Installation
 
-### Quick Start (Run without Installing)
-
-The easiest way to run the agent is using `uvx`, which fetches and runs the package without installing it globally or in a specific environment:
+### Quick Start
 
 ```bash
-# Run with core features only
+# Core features only
 uvx investor-agent
-```
 
-If you need the `calculate_technical_indicator` tool (and have the prerequisite [TA-Lib C Library](#optional-ta-lib-c-library) installed), you can include the optional dependencies:
-
-```bash
-# Run with technical indicator features included
+# With technical indicators (requires TA-Lib)
 uvx "investor-agent[ta]"
 ```
 
-*Note: Using `uvx "package[extra]"` requires a recent version of `uv` (0.7.0 or later).*
-*Note: Using `uvx` with `[ta]` requires the TA-Lib C library to be properly installed and discoverable on your system beforehand.*
-
 ## Tools
 
-The **investor-agent** server comes with several tools to support financial analysis:
+### Market Data
+- **`get_ticker_data(ticker, max_news=5, max_recommendations=5, max_upgrades=5)`** - Comprehensive ticker report with smart field filtering to exclude irrelevant metadata and configurable limits for news, recommendations, and upgrades/downgrades
+- **`get_options(ticker_symbol, num_options=10, start_date, end_date, strike_lower, strike_upper, option_type)`** - Options data with advanced filtering by date range (YYYY-MM-DD), strike price bounds, and option type (C=calls, P=puts)
+- **`get_price_history(ticker, period="1mo")`** - Historical OHLCV data with intelligent interval selection: daily intervals for periods ≤1y, monthly intervals for periods ≥2y to optimize data volume
+- **`get_financial_statements(ticker, statement_type="income", frequency="quarterly", max_periods=8)`** - Financial statements (income/balance/cash) with period limiting for context optimization
+- **`get_institutional_holders(ticker, top_n=20)`** - Major institutional and mutual fund holders data
+- **`get_earnings_history(ticker, max_entries=8)`** - Historical earnings data with configurable entry limits
+- **`get_insider_trades(ticker, max_trades=20)`** - Recent insider trading activity with configurable trade limits
 
-### Ticker Information
+### Market Sentiment
+- **`get_cnn_fear_greed_index(days=0, indicators=None)`** - CNN Fear & Greed Index with support for up to 30 days of historical data and selective indicator filtering. Available indicators: fear_and_greed, fear_and_greed_historical, put_call_options, market_volatility_vix, market_volatility_vix_50, junk_bond_demand, safe_haven_demand
+- **`get_crypto_fear_greed_index(days=7)`** - Crypto Fear & Greed Index with configurable historical data period
 
-1. **`get_ticker_data`**
-   - **Description:** Retrieves a comprehensive report for a given ticker symbol, including company overview, news, key metrics, performance, dates, analyst recommendations, and upgrades/downgrades.
-   - **Input:**
-     - `ticker` (string): Stock ticker symbol (e.g., `"AAPL"`).
-   - **Return:** A formatted multi-section report.
-
-2. **`get_options`**
-   - **Description:** Provides a list of stock options with the highest open interest.
-   - **Inputs:**
-     - `ticker_symbol` (string): Stock ticker symbol.
-     - `num_options` (int, optional): Number of options to return (default: 10).
-     - `start_date` & `end_date` (string, optional): Date range in `YYYY-MM-DD` format.
-     - `strike_lower` & `strike_upper` (float, optional): Desired strike price range.
-     - `option_type` (string, optional): Option type (`"C"` for calls, `"P"` for puts).
-   - **Return:** A formatted table of options data.
-
-3. **`get_price_history`**
-   - **Description:** Retrieves historical price data for a specific ticker.
-   - **Inputs:**
-     - `ticker` (string): Stock ticker symbol.
-     - `period` (string): Time period (choose from `"1d"`, `"5d"`, `"1mo"`, `"3mo"`, `"6mo"`, `"1y"`, `"2y"`, `"5y"`, `"10y"`, `"ytd"`, `"max"`).
-   - **Return:** A table showing price history.
-
-### Financial Data Tools
-
-1. **`get_financial_statements`**
-   - **Description:** Fetches financial statements (income, balance, or cash flow) formatted in millions USD.
-   - **Inputs:**
-     - `ticker` (string): Stock ticker symbol.
-     - `statement_type` (string): `"income"`, `"balance"`, or `"cash"`.
-     - `frequency` (string): `"quarterly"` or `"annual"`.
-   - **Return:** A formatted financial statement.
-
-2. **`get_institutional_holders`**
-   - **Description:** Retrieves details about major institutional and mutual fund holders.
-   - **Input:**
-     - `ticker` (string): Stock ticker symbol.
-   - **Return:** Two formatted tables listing institutional and mutual fund holders.
-
-3. **`get_earnings_history`**
-   - **Description:** Retrieves a formatted table of earnings history.
-   - **Input:**
-     - `ticker` (string): Stock ticker symbol.
-   - **Return:** A table displaying historical earnings data.
-
-4. **`get_insider_trades`**
-   - **Description:** Fetches the recent insider trading activity for a given ticker.
-   - **Input:**
-     - `ticker` (string): Stock ticker symbol.
-   - **Return:** A formatted table showing insider trades.
-
-### CNN Fear & Greed Index Tools
-
-1. **`get_current_fng_tool`**
-   - **Description:** Retrieves the current CNN Fear & Greed Index score, rating, and classification.
-   - **Inputs:** None
-   - **Return:** A string containing the current index details.
-
-2. **`get_historical_fng_tool`**
-   - **Description:** Fetches historical CNN Fear & Greed Index data for a specified number of days.
-   - **Inputs:**
-     - `days` (int): Number of days of historical data to retrieve.
-   - **Return:** A string listing historical scores and classifications.
-
-3. **`analyze_fng_trend`**
-   - **Description:** Analyzes the trend of the CNN Fear & Greed Index over a specified number of days.
-   - **Inputs:**
-     - `days` (int): Number of days to include in the trend analysis.
-   - **Return:** A summary string including the latest value, average, range, trend direction, and classification.
-
-### Technical Analysis Tools
-
-1. **`calculate_technical_indicator`**
-   - **Description:** Calculates a specified technical indicator (SMA, EMA, RSI, MACD, BBANDS) for a ticker using daily closing prices over a given historical period. **Requires optional `ta` installation.**
-   - **Inputs:**
-     - `ticker` (string): Stock ticker symbol (e.g., `"AAPL"`).
-     - `indicator` (string): The indicator to calculate. Choose from `"SMA"`, `"EMA"`, `"RSI"`, `"MACD"`, `"BBANDS"`.
-     - `period` (string, optional): Historical data period (e.g., `"1y"`, default: `"1y"`). Choose from `"1mo"`, `"3mo"`, `"6mo"`, `"1y"`, `"2y"`, `"5y"`.
-     - `timeperiod` (int, optional): Lookback period for SMA, EMA, RSI, BBANDS (default: 14).
-     - `fastperiod` (int, optional): Fast EMA period for MACD (default: 12).
-     - `slowperiod` (int, optional): Slow EMA period for MACD (default: 26).
-     - `signalperiod` (int, optional): Signal line EMA period for MACD (default: 9).
-     - `nbdevup` (int, optional): Upper standard deviation multiplier for BBANDS (default: 2).
-     - `nbdevdn` (int, optional): Lower standard deviation multiplier for BBANDS (default: 2).
-     - `matype` (int, optional): Moving average type for BBANDS (default: 0 for SMA). See TA-Lib docs.
-     - `num_results` (int, optional): Number of recent results to display (default: 10).
-   - **Return:** A formatted table showing the most recent calculated indicator values alongside dates and closing prices.
-
-### Informational Prompts
-
-1. **`investment_principles`**
-   - **Description:** Provides a set of core investment principles and guidelines.
-   - **Inputs:** None
-   - **Return:** A string outlining several investment principles.
-
-2. **`portfolio_construction_prompt`**
-   - **Description:** Outlines a portfolio construction strategy incorporating tail-hedging.
-   - **Inputs:** None
-   - **Return:** A detailed prompt guiding the construction of a hedged portfolio.
+### Technical Analysis
+- **`calculate_technical_indicator(ticker, indicator, period="1y", timeperiod=14, ...)`** - Calculate technical indicators (SMA, EMA, RSI, MACD, BBANDS) with configurable parameters and result limiting. Returns time-aligned data with price history and indicator values. Requires TA-Lib library.
 
 ## Usage with MCP Clients
 
-To integrate **investor-agent** with an MCP client (for example, Claude Desktop), add the following configuration to your `claude_desktop_config.json`:
+Add to your `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "investor": {
-        "command": "path/to/uvx/command/uvx",
-        "args": ["investor-agent"],
+      "command": "uvx",
+      "args": ["investor-agent"]
     }
   }
 }
@@ -177,17 +74,14 @@ To integrate **investor-agent** with an MCP client (for example, Claude Desktop)
 
 ## Debugging
 
-You can leverage the MCP inspector to debug the server:
-
 ```bash
 npx @modelcontextprotocol/inspector uvx investor-agent
 ```
 
-For log monitoring, check the following directories:
-
+**Log locations:**
 - macOS: `~/Library/Logs/Claude/mcp*.log`
 - Windows: `%APPDATA%\Claude\logs\mcp*.log`
 
 ## License
 
-This MCP server is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+MIT License. See [LICENSE](LICENSE) file for details.

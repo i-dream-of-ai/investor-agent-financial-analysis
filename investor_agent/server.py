@@ -23,27 +23,136 @@ logging.basicConfig(
 
 mcp = FastMCP("Investor-Agent", dependencies=["yfinance", "httpx", "pandas"]) # TA-Lib is optional
 
+FearGreedIndicator = Literal[
+    "fear_and_greed",
+    "fear_and_greed_historical",
+    "put_call_options",
+    "market_volatility_vix",
+    "market_volatility_vix_50",
+    "junk_bond_demand",
+    "safe_haven_demand"
+]
 
 @mcp.tool()
-def get_ticker_data(ticker: str) -> dict:
-    """Get comprehensive ticker data: info, news, metrics, recommendations, upgrades, calendar."""
+async def get_cnn_fear_greed_index(
+    days: int = 0,
+    indicators: list[FearGreedIndicator] | None = None
+) -> dict:
+    """Max 30 days of historical data."""
+    data = await fetch_fng_data()
+    if not data:
+        raise RuntimeError("Unable to fetch CNN Fear & Greed Index data")
+
+    if indicators:
+        invalid_keys = set(indicators) - set(data.keys())
+        if invalid_keys:
+            raise ValueError(f"Invalid indicators: {list(invalid_keys)}. Available: {list(data.keys())}")
+        data = {k: v for k, v in data.items() if k in indicators}
+
+    # Exclude fear_and_greed_historical when days = 0
+    if days == 0:
+        data = {k: v for k, v in data.items() if k != "fear_and_greed_historical"}
+
+    # Handle historical data based on days parameter
+    max_days = min(days, 30) if days > 0 else 0
+    for key, value in data.items():
+        if isinstance(value, dict) and "data" in value:
+            if days == 0:
+                data[key] = {k: v for k, v in value.items() if k != "data"}
+            elif len(value["data"]) > max_days:
+                data[key] = {**value, "data": value["data"][:max_days]}
+
+    return data
+
+@mcp.tool()
+async def get_crypto_fear_greed_index(days: int = 7) -> dict:
+    """Get historical Crypto Fear & Greed Index data."""
+    logger.info(f"Fetching crypto Fear & Greed Index for {days} days")
+
+    return await fetch_crypto_fear_greed_history(days)
+
+@mcp.tool()
+def get_ticker_data(
+    ticker: str,
+    max_news: int = 5,
+    max_recommendations: int = 5,
+    max_upgrades: int = 5
+) -> dict:
+    """
+    Returns:
+    - info: Core financial metrics (P/E ratios, margins, growth rates, debt ratios, market cap, EPS, etc.)
+    - calendar: Upcoming earnings dates and dividend dates
+    - news: Recent news articles (headlines, dates, sources)
+    - recommendations: Latest analyst recommendations (buy/sell/hold ratings)
+    - upgrades_downgrades: Recent analyst rating changes
+    """
     info = yfinance_utils.get_ticker_info(ticker)
     if not info:
         raise ValueError(f"No information available for {ticker}")
 
-    data = {"info": info}
+    # Filter out clearly irrelevant metadata and technical details
+    excluded_fields = {
+        # Exchange/trading metadata
+        'exchange', 'quoteType', 'exchangeTimezoneName', 'exchangeTimezoneShortName',
+        'fullExchangeName', 'gmtOffSetMilliseconds', 'sourceInterval', 'exchangeDataDelayedBy',
+        'tradeable', 'triggerable', 'market', 'marketState', 'financialCurrency',
+        'quoteSourceName', 'messageBoardId', 'priceHint',
+
+        # Micro-trading data (more relevant for day traders)
+        'bid', 'ask', 'bidSize', 'askSize', 'preMarketChange', 'preMarketChangePercent',
+        'preMarketPrice', 'preMarketTime', 'postMarketChange', 'postMarketChangePercent',
+        'postMarketPrice', 'postMarketTime', 'regularMarketOpen', 'regularMarketTime',
+        'regularMarketPreviousClose', 'regularMarketDayRange', 'regularMarketDayLow', 'regularMarketDayHigh',
+
+        # Administrative/contact details
+        'address1', 'address2', 'city', 'state', 'zip', 'phone', 'fax', 'website',
+        'irWebsite', 'maxAge', 'uuid',
+
+        # Complex timestamp fields (keep simple date fields)
+        'earningsTimestamp', 'earningsTimestampStart', 'earningsTimestampEnd',
+        'mostRecentQuarter', 'nextFiscalYearEnd', 'lastFiscalYearEnd',
+        'sharesShortPreviousMonthDate', 'dateShortInterest',
+
+        # Redundant price/change calculations
+        'regularMarketChange', 'regularMarketChangePercent', 'fiftyTwoWeekLowChange',
+        'fiftyTwoWeekLowChangePercent', 'fiftyTwoWeekHighChange', 'fiftyTwoWeekHighChangePercent',
+        'fiftyDayAverageChange', 'fiftyDayAverageChangePercent', 'twoHundredDayAverageChange',
+        'twoHundredDayAverageChangePercent',
+
+        # Governance/risk scores (specialized use case)
+        'compensationAsOfEpochDate', 'compensationRisk', 'auditRisk', 'boardRisk',
+        'shareHolderRightsRisk', 'overallRisk', 'governanceEpochDate',
+
+        # ESG data (valuable but specialized)
+        'esgPopulated', 'environmentScore', 'socialScore', 'governanceScore',
+
+        # Redundant averages (keep the most useful ones)
+        'averageDailyVolume10Day', 'averageVolume10days',  # keep averageVolume and averageDailyVolume3Month
+
+        # Split/dividend detail fields (keep the rates/yields)
+        'lastSplitFactor', 'lastSplitDate', 'lastDividendValue', 'lastDividendDate',
+
+        # Display/formatting fields
+        'displayName', 'shortName',  # keep longName for full company name
+    }
+
+    filtered_info = {k: v for k, v in info.items() if k not in excluded_fields}
+    logger.info(f"Filtered ticker info from {len(info)} to {len(filtered_info)} fields by excluding {len(excluded_fields)} irrelevant fields")
+    data = {"info": filtered_info}
 
     if calendar := yfinance_utils.get_calendar(ticker):
         data["calendar"] = calendar
 
-    if (recommendations := yfinance_utils.get_recommendations(ticker)) is not None and not recommendations.empty:
-        data["recommendations"] = recommendations.to_dict('records')
-
-    if (upgrades := yfinance_utils.get_upgrades_downgrades(ticker)) is not None and not upgrades.empty:
-        data["upgrades_downgrades"] = upgrades.to_dict('records')
-
-    if news := yfinance_utils.get_news(ticker):
+    if news := yfinance_utils.get_news(ticker, limit=max_news):
         data["news"] = news
+
+    recommendations = yfinance_utils.get_recommendations(ticker, limit=max_recommendations)
+    if recommendations is not None and not recommendations.empty:
+        data["recommendations"] = recommendations.to_dict('split')
+
+    upgrades = yfinance_utils.get_upgrades_downgrades(ticker, limit=max_upgrades)
+    if upgrades is not None and not upgrades.empty:
+        data["upgrades_downgrades"] = upgrades.to_dict('split')
 
     return data
 
@@ -64,7 +173,7 @@ def get_options(
     if error:
         raise ValueError(error)
 
-    return df.head(num_options).to_dict('records')
+    return df.head(num_options).to_dict('split')
 
 
 @mcp.tool()
@@ -72,26 +181,40 @@ def get_price_history(
     ticker: str,
     period: Literal["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"] = "1mo"
 ) -> dict:
-    """Get historical price data."""
-    history = yfinance_utils.get_price_history(ticker, period)
+    """Get historical OHLCV data: daily intervals for ≤1y periods, monthly intervals for ≥2y periods."""
+    # Use monthly intervals for longer periods to reduce data volume
+    if period in ["2y", "5y", "10y", "max"]:
+        interval = "1mo"
+        logger.info(f"Using monthly interval for {period} period to optimize data volume")
+    else:
+        interval = "1d"
+        logger.info(f"Using daily interval for {period} period")
+
+    history = yfinance_utils.get_price_history(ticker, period, interval)
     if history is None or history.empty:
         raise ValueError(f"No historical data found for {ticker}")
 
-    return history.to_dict('records')
+    return history.to_dict('split')
 
 @mcp.tool()
 def get_financial_statements(
     ticker: str,
     statement_type: Literal["income", "balance", "cash"] = "income",
     frequency: Literal["quarterly", "annual"] = "quarterly",
+    max_periods: int = 8
 ) -> dict:
-    """Get financial statements."""
     data = yfinance_utils.get_financial_statements(ticker, statement_type, frequency)
 
     if data is None or data.empty:
         raise ValueError(f"No {statement_type} statement data found for {ticker}")
 
-    return data.to_dict('records')
+    # Limit to most recent periods if data is extensive
+    if len(data.columns) > max_periods:
+        # Keep the most recent periods (columns are typically in reverse chronological order)
+        data = data.iloc[:, :max_periods]
+        logger.info(f"Limited {statement_type} statement to {max_periods} most recent periods to optimize context size")
+
+    return data.to_dict('split')
 
 @mcp.tool()
 def get_institutional_holders(ticker: str, top_n: int = 20) -> dict:
@@ -101,35 +224,32 @@ def get_institutional_holders(ticker: str, top_n: int = 20) -> dict:
     if (inst_holders is None or inst_holders.empty) and (fund_holders is None or fund_holders.empty):
         raise ValueError(f"No institutional holder data found for {ticker}")
 
-    result = {}
-
-    if inst_holders is not None and not inst_holders.empty:
-        result["institutional_holders"] = inst_holders.to_dict('records')
-
-    if fund_holders is not None and not fund_holders.empty:
-        result["mutual_fund_holders"] = fund_holders.to_dict('records')
-
-    return result
+    return {
+        key: data.to_dict('split')
+        for key, data in [
+            ("institutional_holders", inst_holders),
+            ("mutual_fund_holders", fund_holders)
+        ]
+        if data is not None and not data.empty
+    }
 
 @mcp.tool()
-def get_earnings_history(ticker: str) -> dict:
-    """Get earnings history with estimates and surprises."""
-    earnings_history = yfinance_utils.get_earnings_history(ticker)
+def get_earnings_history(ticker: str, max_entries: int = 8) -> dict:
+    earnings_history = yfinance_utils.get_earnings_history(ticker, limit=max_entries)
 
     if earnings_history is None or earnings_history.empty:
         raise ValueError(f"No earnings history data found for {ticker}")
 
-    return earnings_history.to_dict('records')
+    return earnings_history.to_dict('split')
 
 @mcp.tool()
-def get_insider_trades(ticker: str) -> dict:
-    """Get recent insider trading activity."""
-    trades = yfinance_utils.get_insider_trades(ticker)
+def get_insider_trades(ticker: str, max_trades: int = 20) -> dict:
+    trades = yfinance_utils.get_insider_trades(ticker, limit=max_trades)
 
     if trades is None or trades.empty:
         raise ValueError(f"No insider trading data found for {ticker}")
 
-    return trades.to_dict('records')
+    return trades.to_dict('split')
 
 # Only register the technical indicator tool if TA-Lib is available
 if _ta_available:
@@ -147,15 +267,13 @@ if _ta_available:
         num_results: int = 50  # Number of recent results to return
     ) -> dict:
         """Calculate technical indicators with proper date alignment and result limiting."""
-        history = yfinance_utils.get_price_history(ticker, period=period)
-        if history is None or history.empty:
-            raise ValueError(f"No historical data found for {ticker} for period {period}")
-        if 'Close' not in history.columns:
-             raise ValueError(f"Historical data for {ticker} is missing the 'Close' price")
+        import numpy as np
+
+        history = yfinance_utils.get_price_history(ticker, period=period, interval="1d")
+        if history is None or history.empty or 'Close' not in history.columns:
+            raise ValueError(f"No valid historical data found for {ticker}")
 
         close_prices = history['Close'].values
-
-        # More accurate minimum data requirements
         min_required = {
             "SMA": timeperiod, "EMA": timeperiod * 2, "RSI": timeperiod + 1,
             "MACD": slowperiod + signalperiod, "BBANDS": timeperiod
@@ -164,121 +282,30 @@ if _ta_available:
         if len(close_prices) < min_required:
             raise ValueError(f"Insufficient data for {indicator} ({len(close_prices)} points, need {min_required})")
 
-        # Calculate indicators
-        import numpy as np
-        if indicator == "SMA":
-            result = {"sma": talib.SMA(close_prices, timeperiod=timeperiod)}
-        elif indicator == "EMA":
-            result = {"ema": talib.EMA(close_prices, timeperiod=timeperiod)}
-        elif indicator == "RSI":
-            result = {"rsi": talib.RSI(close_prices, timeperiod=timeperiod)}
-        elif indicator == "MACD":
-            macd, signal, histogram = talib.MACD(close_prices, fastperiod=fastperiod, slowperiod=slowperiod, signalperiod=signalperiod)
-            result = {"macd": macd, "signal": signal, "histogram": histogram}
-        elif indicator == "BBANDS":
-            upper, middle, lower = talib.BBANDS(close_prices, timeperiod=timeperiod, nbdevup=nbdev, nbdevdn=nbdev, matype=matype)
-            result = {"upper_band": upper, "middle_band": middle, "lower_band": lower}
-
-        # Convert to lists, handle NaN, and limit results
-        dates = history.index.strftime('%Y-%m-%d').tolist()
-        if num_results > 0 and len(dates) > num_results:
-            start_idx = len(dates) - num_results
-            dates = dates[start_idx:]
-            history = history.iloc[start_idx:]
-
-        # Create aligned data with proper NaN handling
-        data = []
-        for i, date in enumerate(dates):
-            point = {"date": date, "price": history.iloc[i].to_dict()}
-            point["indicators"] = {}
-            for key, values in result.items():
-                val = values[start_idx + i] if num_results > 0 and len(dates) < len(values) else values[i]
-                point["indicators"][key] = None if np.isnan(val) else float(val)
-            data.append(point)
-
-        return data
-
-@mcp.prompt()
-def investment_principles() -> str:
-    """Core investment principles and guidelines."""
-    return """
-Core investment principles:
-• Play for meaningful stakes
-• Resist the allure of diversification. Invest in ventures that are genuinely interesting
-• When the ship starts to sink, jump
-• Never hesitate to abandon a venture if something more attractive comes into view
-• Nobody knows the future
-• Prices move based on human emotions, not quantifiable measures
-• History does not necessarily repeat itself. Ignore chart patterns
-• Disregard what everybody says until you've thought through yourself
-• Don't average down a bad trade
-• React to events as they unfold in the present instead of planning for unknowable futures
-• Reevaluate every investment quarterly: Would you buy this today if presented for the first time?
-"""
-
-@mcp.prompt()
-async def portfolio_construction_prompt() -> str:
-    """Portfolio construction strategy using tail-hedging via married puts."""
-    return """
-Portfolio construction with tail-hedge strategy:
-
-1. Analyze current portfolio: asset classes, correlation, historical performance, volatility, drawdown risk
-2. Design core portfolio: maintain market exposure, align with risk tolerance, use low-cost index funds/ETFs
-3. Develop tail-hedge (~3% allocation): married put strategy with 3-month puts, strike 15% below current price
-4. Specify rebalancing: when to reset hedges, how to redeploy gains, account for time decay
-5. Include performance metrics: expected returns in various scenarios, impact on long-term CAGR, volatility reduction
-6. Implementation: specific securities, timing, tax implications
-
-Use available tools for analysis. Focus on reducing "volatility tax" while maintaining growth potential.
-"""
-
-@mcp.tool()
-async def get_cnn_fear_greed_index(days: int = 30) -> dict:
-    """Get CNN Fear & Greed Index with current value and optional historical data.
-
-    Args:
-        days: Number of historical days to include (0 = current only, >0 = current + history)
-    """
-    logger.info(f"Fetching comprehensive CNN Fear & Greed Index for {days} days")
-
-    if days < 0:
-        raise ValueError("Days must be zero or a positive integer")
-
-    data = await fetch_fng_data()
-
-    if not data:
-        raise RuntimeError("Unable to fetch CNN Fear & Greed Index data")
-
-    # Get current data
-    fear_and_greed = data.get("fear_and_greed", {})
-    current_score = int(fear_and_greed.get("score", 0))
-    current_rating = fear_and_greed.get("rating", "Unknown")
-    current_timestamp = fear_and_greed.get("timestamp")
-
-    result = {
-        "current": {
-            "score": current_score,
-            "rating": current_rating
+        # Calculate indicators using mapping
+        indicator_funcs = {
+            "SMA": lambda: {"sma": talib.SMA(close_prices, timeperiod=timeperiod)},
+            "EMA": lambda: {"ema": talib.EMA(close_prices, timeperiod=timeperiod)},
+            "RSI": lambda: {"rsi": talib.RSI(close_prices, timeperiod=timeperiod)},
+            "MACD": lambda: dict(zip(["macd", "signal", "histogram"],
+                                   talib.MACD(close_prices, fastperiod=fastperiod, slowperiod=slowperiod, signalperiod=signalperiod))),
+            "BBANDS": lambda: dict(zip(["upper_band", "middle_band", "lower_band"],
+                                     talib.BBANDS(close_prices, timeperiod=timeperiod, nbdevup=nbdev, nbdevdn=nbdev, matype=matype)))
         }
-    }
+        result = indicator_funcs[indicator]()
 
-    # Add current timestamp if available
-    if current_timestamp:
-        result["current"]["timestamp"] = current_timestamp
+        # Limit results and prepare data
+        dates = history.index.strftime('%Y-%m-%d').tolist()
+        start_idx = max(0, len(dates) - num_results) if num_results > 0 else 0
 
-    # Get historical data (only if days > 0)
-    history = data.get("fear_and_greed_historical", [])
-    if history and days > 0:
-        # Limit to the requested number of days
-        limited_history = history[:min(days, len(history))]
-        result["historical"] = limited_history
-
-    return result
-
-
-@mcp.tool()
-async def get_crypto_fear_greed_index_history(days: int = 30) -> dict:
-    """Get historical Crypto Fear & Greed Index data."""
-    logger.info(f"Fetching crypto Fear & Greed Index for {days} days")
-
-    return await fetch_crypto_fear_greed_history(days)
+        return [
+            {
+                "date": dates[i],
+                "price": history.iloc[i].to_dict(),
+                "indicators": {
+                    key: None if np.isnan(val := values[i]) else float(val)
+                    for key, values in result.items()
+                }
+            }
+            for i in range(start_idx, len(dates))
+        ]
