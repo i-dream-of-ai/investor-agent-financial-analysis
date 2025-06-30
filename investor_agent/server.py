@@ -2,6 +2,7 @@ import logging
 from typing import Literal
 import sys
 
+import httpx
 from mcp.server.fastmcp import FastMCP
 try:
     import talib  # type: ignore
@@ -11,7 +12,6 @@ except ImportError:
 
 from . import yfinance_utils
 from .sentiment import fetch_fng_data
-from .crypto import fetch_crypto_fear_greed_history
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stderr)]
 )
 
-mcp = FastMCP("Investor-Agent", dependencies=["yfinance", "httpx", "pandas"]) # TA-Lib is optional
+mcp = FastMCP("Investor-Agent", dependencies=["yfinance", "httpx", "pandas", "pytrends"]) # TA-Lib is optional
 
 FearGreedIndicator = Literal[
     "fear_and_greed",
@@ -67,9 +67,30 @@ async def get_cnn_fear_greed_index(
 @mcp.tool()
 async def get_crypto_fear_greed_index(days: int = 7) -> dict:
     """Get historical Crypto Fear & Greed Index data."""
-    logger.info(f"Fetching crypto Fear & Greed Index for {days} days")
+    async with httpx.AsyncClient() as client:
+        response = await client.get("https://api.alternative.me/fng/", params={"limit": days})
+        response.raise_for_status()
+        data = response.json()["data"]
+    return data
 
-    return await fetch_crypto_fear_greed_history(days)
+@mcp.tool()
+def get_google_trends(
+    keywords: list[str],
+    period_days: int = 7
+) -> dict:
+    """Get Google Trends relative search interest for specified keywords."""
+    from pytrends.request import TrendReq
+
+    logger.info(f"Fetching Google Trends data for {period_days} days")
+
+    pytrends = TrendReq(hl='en-US', tz=360)
+    pytrends.build_payload(keywords, timeframe=f'now {period_days}-d')
+
+    data = pytrends.interest_over_time()
+    if data.empty:
+        raise ValueError("No data returned from Google Trends")
+
+    return data[keywords].mean().to_dict()
 
 @mcp.tool()
 def get_ticker_data(

@@ -11,7 +11,7 @@ The **investor-agent** is a Model Context Protocol (MCP) server that provides co
 - **Historical Data:** Price trends and earnings history
 - **Financial Statements:** Income, balance sheet, and cash flow statements
 - **Ownership Analysis:** Institutional holders and insider trading activity
-- **Market Sentiment:** CNN Fear & Greed Index and Crypto Fear & Greed Index
+- **Market Sentiment:** CNN Fear & Greed Index, Crypto Fear & Greed Index, and Google Trends sentiment analysis
 - **Technical Analysis:** SMA, EMA, RSI, MACD, BBANDS indicators (optional)
 
 The server integrates with [yfinance](https://pypi.org/project/yfinance/) for market data and automatically optimizes data volume for better performance.
@@ -53,6 +53,7 @@ uvx "investor-agent[ta]"
 ### Market Sentiment
 - **`get_cnn_fear_greed_index(days=0, indicators=None)`** - CNN Fear & Greed Index with support for up to 30 days of historical data and selective indicator filtering. Available indicators: fear_and_greed, fear_and_greed_historical, put_call_options, market_volatility_vix, market_volatility_vix_50, junk_bond_demand, safe_haven_demand
 - **`get_crypto_fear_greed_index(days=7)`** - Crypto Fear & Greed Index with configurable historical data period
+- **`get_google_trends(keywords, period_days=7)`** - Google Trends relative search interest for market-related keywords. Requires a list of keywords to track (e.g., ["stock market crash", "bull market", "recession", "inflation"]). Returns relative search interest scores that can be used as sentiment indicators.
 
 ### Technical Analysis
 - **`calculate_technical_indicator(ticker, indicator, period="1y", timeperiod=14, ...)`** - Calculate technical indicators (SMA, EMA, RSI, MACD, BBANDS) with configurable parameters and result limiting. Returns time-aligned data with price history and indicator values. Requires TA-Lib library.

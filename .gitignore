@@ -3,3 +3,4 @@
 .venv
 dist
 yfinance.cache
+investor_agent/_version.py
