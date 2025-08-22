@@ -50,46 +50,25 @@ def retry_on_rate_limit(max_retries: int = 3, base_delay: float = 5.0, success_d
 
 @retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
 def get_ticker_info(ticker: str) -> dict | None:
-    try:
-        return yf.Ticker(ticker).get_info()
-    except Exception as e:
-        logger.error(f"Error retrieving ticker info for {ticker}: {e}", exc_info=True)
-        return None
+    return yf.Ticker(ticker).get_info()
 
 @retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
 def get_calendar(ticker: str) -> dict | None:
     """Get calendar events including earnings and dividend dates."""
-    try:
-        return yf.Ticker(ticker).get_calendar()
-    except Exception as e:
-        logger.error(f"Error retrieving calendar for {ticker}: {e}", exc_info=True)
-        return None
+    return yf.Ticker(ticker).get_calendar()
 
 @retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
-def get_recommendations(ticker: str, limit: int = 5) -> pd.DataFrame | None:
-    """Get analyst recommendations.
-    Returns DataFrame with columns: Firm, To Grade, From Grade, Action
-    Limited to most recent entries by default.
-    """
-    try:
-        df = yf.Ticker(ticker).get_recommendations()
-        return df.head(limit) if df is not None else None
-    except Exception as e:
-        logger.error(f"Error retrieving recommendations for {ticker}: {e}")
-        return None
-
-@retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
-def get_upgrades_downgrades(ticker: str, limit: int = 5) -> pd.DataFrame | None:
-    """Get upgrades/downgrades history.
-    Returns DataFrame with columns: firm, toGrade, fromGrade, action
-    Limited to most recent entries by default.
-    """
-    try:
-        df = yf.Ticker(ticker).get_upgrades_downgrades()
-        return df.sort_index(ascending=False).head(limit) if df is not None else None
-    except Exception as e:
-        logger.error(f"Error retrieving upgrades/downgrades for {ticker}: {e}")
-        return None
+def get_analyst_data(ticker: str, data_type: Literal["recommendations", "upgrades"], limit: int = 5) -> pd.DataFrame | None:
+    """Get analyst recommendations or upgrades/downgrades data."""
+    t = yf.Ticker(ticker)
+    if data_type == "recommendations":
+        df = t.get_recommendations()
+    else:  # upgrades
+        df = t.get_upgrades_downgrades()
+        if df is not None:
+            df = df.sort_index(ascending=False)
+    
+    return df.head(limit) if df is not None else None
 
 def get_news(ticker: str, limit: int = 10) -> list[dict] | None:
     """Return recent news in `[date,title,source,url]` dicts."""
@@ -116,8 +95,7 @@ def get_news(ticker: str, limit: int = 10) -> list[dict] | None:
             })
 
         return out
-    except Exception as e:
-        logger.error(f"get_news({ticker}) error: {e}")
+    except Exception:
         return None
 
 @retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
@@ -126,11 +104,7 @@ def get_price_history(
     period: Literal["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"] = "1mo",
     interval: Literal["1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo"] = "1d"
 ) -> pd.DataFrame | None:
-    try:
-        return yf.Ticker(ticker).history(period=period, interval=interval)
-    except Exception as e:
-        logger.error(f"Error retrieving price history for {ticker}: {e}")
-        return None
+    return yf.Ticker(ticker).history(period=period, interval=interval)
 
 @retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
 def get_financial_statements(
@@ -138,50 +112,34 @@ def get_financial_statements(
     statement_type: Literal["income", "balance", "cash"] = "income",
     frequency: Literal["quarterly", "annual"] = "quarterly"
 ) -> pd.DataFrame | None:
-    try:
-        t = yf.Ticker(ticker)
-        statements = {
-            "income": {"annual": t.income_stmt, "quarterly": t.quarterly_income_stmt},
-            "balance": {"annual": t.balance_sheet, "quarterly": t.quarterly_balance_sheet},
-            "cash": {"annual": t.cashflow, "quarterly": t.quarterly_cashflow}
-        }
-        return statements[statement_type][frequency]
-    except Exception as e:
-        logger.error(f"Error retrieving {frequency} {statement_type} statement for {ticker}: {e}")
-        return None
+    t = yf.Ticker(ticker)
+    statements = {
+        "income": {"annual": t.income_stmt, "quarterly": t.quarterly_income_stmt},
+        "balance": {"annual": t.balance_sheet, "quarterly": t.quarterly_balance_sheet},
+        "cash": {"annual": t.cashflow, "quarterly": t.quarterly_cashflow}
+    }
+    return statements[statement_type][frequency]
 
 @retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
 def get_institutional_holders(ticker: str, top_n: int = 20) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
-    try:
-        t = yf.Ticker(ticker)
-        inst = t.get_institutional_holders()
-        fund = t.get_mutualfund_holders()
-        return (inst.head(top_n) if inst is not None else None,
-                fund.head(top_n) if fund is not None else None)
-    except Exception as e:
-        logger.error(f"Error retrieving institutional holders for {ticker}: {e}")
-        return None, None
+    t = yf.Ticker(ticker)
+    inst = t.get_institutional_holders()
+    fund = t.get_mutualfund_holders()
+    return (inst.head(top_n) if inst is not None else None,
+            fund.head(top_n) if fund is not None else None)
 
 @retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
 def get_earnings_history(ticker: str, limit: int = 12) -> pd.DataFrame | None:
     """Get raw earnings history data.
     Default limit of 12 shows 3 years of quarterly earnings.
     """
-    try:
-        df = yf.Ticker(ticker).get_earnings_history()
-        return df.head(limit) if df is not None else None
-    except Exception as e:
-        logger.error(f"Error retrieving earnings history for {ticker}: {e}")
-        return None
+    df = yf.Ticker(ticker).get_earnings_history()
+    return df.head(limit) if df is not None else None
 
 @retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
 def get_insider_trades(ticker: str, limit: int = 30) -> pd.DataFrame | None:
-    try:
-        df = yf.Ticker(ticker).get_insider_transactions()
-        return df.head(limit) if df is not None else None
-    except Exception as e:
-        logger.error(f"Error retrieving insider trades for {ticker}: {e}")
-        return None
+    df = yf.Ticker(ticker).get_insider_transactions()
+    return df.head(limit) if df is not None else None
 
 @retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
 def get_options_chain(
@@ -209,7 +167,6 @@ def get_options_chain(
         return pd.concat([chain.calls, chain.puts]), None
 
     except Exception as e:
-        logger.error(f"Error retrieving options chain for {ticker}: {e}")
         return None, str(e)
 
 @retry_on_rate_limit(max_retries=3, base_delay=5.0, success_delay=1.5)
@@ -267,7 +224,6 @@ def get_filtered_options(
 
         for (chain, error), expiry in zip(options_results, valid_expirations):
             if error:
-                logger.warning(f"Error fetching options for expiry {expiry}: {error}")
                 continue
             if chain is not None:
                 filtered_option_chains.append(chain.assign(expiryDate=expiry))
@@ -289,5 +245,4 @@ def get_filtered_options(
         return df.sort_values(['openInterest', 'volume'], ascending=[False, False]), None
 
     except Exception as e:
-        logger.error(f"Error in get_filtered_options: {str(e)}", exc_info=True)
         return None, f"Failed to retrieve options data: {str(e)}"

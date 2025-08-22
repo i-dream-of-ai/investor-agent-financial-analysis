@@ -1,5 +1,6 @@
 import logging
 import httpx
+import hishel
 
 logger = logging.getLogger(__name__)
 
@@ -13,15 +14,10 @@ async def fetch_fng_data() -> dict | None:
         "Referer": "https://www.cnn.com/markets/fear-and-greed",
     }
 
-    # Use caching transport to avoid refetching identical data too frequently
-    transport = None
-    try:
-        from httpx_caching import CachingTransport  # type: ignore
-        transport = CachingTransport()
-    except Exception:
-        transport = None
-
-    async with httpx.AsyncClient(transport=transport) as client:
+    # Use hishel caching to avoid refetching identical data too frequently
+    hishel.install_cache()
+    
+    async with httpx.AsyncClient() as client:
         response = await client.get(
             "https://production.dataviz.cnn.io/index/fearandgreed/graphdata",
             headers=headers

@@ -4,6 +4,7 @@ import sys
 
 import httpx
 import pandas as pd
+import hishel
 from mcp.server.fastmcp import FastMCP
 try:
     import talib  # type: ignore
@@ -23,24 +24,23 @@ logging.basicConfig(
 )
 
 mcp = FastMCP("Investor-Agent", dependencies=["yfinance", "httpx", "pandas", "pytrends", "beautifulsoup4"]) # Added bs4
+
+YAHOO_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+}
 def _create_cached_async_client(headers: dict | None = None) -> httpx.AsyncClient:
-    """Create an httpx.AsyncClient with caching transport when available."""
-    try:
-        from httpx_caching import CachingTransport  # type: ignore
-        transport = CachingTransport()
-        return httpx.AsyncClient(
-            timeout=30.0,
-            follow_redirects=True,
-            headers=headers,
-            transport=transport,
-        )
-    except Exception:
-        # Fallback to regular client if caching transport unavailable
-        return httpx.AsyncClient(
-            timeout=30.0,
-            follow_redirects=True,
-            headers=headers,
-        )
+    """Create an httpx.AsyncClient with caching enabled via hishel."""
+    hishel.install_cache()
+    return httpx.AsyncClient(
+        timeout=30.0,
+        follow_redirects=True,
+        headers=headers,
+    )
 
 
 FearGreedIndicator = Literal[
@@ -95,93 +95,64 @@ async def get_market_movers(
         if not url:
             raise ValueError(f"Invalid category: {category}")
 
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-    }
+    async with _create_cached_async_client(headers=YAHOO_HEADERS) as client:
+        logger.info(f"Fetching {category} ({market_session} session) from: {url}")
+        response = await client.get(url)
+        response.raise_for_status()
 
-    try:
-        async with _create_cached_async_client(headers=headers) as client:
-            logger.info(f"Fetching {category} ({market_session} session) from: {url}")
-            response = await client.get(url)
-            response.raise_for_status()
+        # Parse with pandas
+        tables = pd.read_html(response.content)
+        if not tables:
+            raise ValueError(f"No data found for {category}")
 
-            # Parse with pandas
-            tables = pd.read_html(response.content)
-            if not tables:
-                raise ValueError(f"No data found for {category}")
+        df = tables[0].copy()
 
-            df = tables[0].copy()
+        # Clean up the data
+        df = df.drop('52 Week Range', axis=1, errors='ignore')
 
-            # Clean up the data
-            if '52 Week Range' in df.columns:
-                df = df.drop('52 Week Range', axis=1)
+        # Clean percentage change column
+        if '% Change' in df.columns:
+            df['% Change'] = df['% Change'].astype(str).str.replace('[%+,]', '', regex=True)
+            df['% Change'] = pd.to_numeric(df['% Change'], errors='coerce')
 
-            # Clean percentage change column
-            if '% Change' in df.columns:
-                df['% Change'] = df['% Change'].astype(str).str.replace('%', '').str.replace('+', '').str.replace(',', '')
-                df['% Change'] = pd.to_numeric(df['% Change'], errors='coerce')
+        # Clean numeric columns
+        numeric_cols = [col for col in df.columns if any(x in col for x in ['Vol', 'Volume', 'Market Cap', 'Market'])]
+        for col in numeric_cols:
+            df[col] = df[col].astype(str).apply(_convert_to_numeric)
 
-            # Clean volume and market cap columns
-            volume_cols = [col for col in df.columns if 'Vol' in col or 'Volume' in col]
-            market_cap_cols = [col for col in df.columns if 'Market Cap' in col or 'Market' in col]
-
-            for col in volume_cols + market_cap_cols:
-                if col in df.columns:
-                    df[col] = df[col].astype(str).apply(_convert_to_numeric)
-
-            return {
-                'metadata': {
-                    'category': category,
-                    'market_session': market_session if category == "most-active" else "regular",
-                    'count': len(df),
-                    'timestamp': pd.Timestamp.now().isoformat(),
-                    'source': 'Yahoo Finance'
-                },
-                'stocks': df.head(count).to_dict('records')
-            }
-
-    except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error fetching {category}: {e}")
-        raise ValueError(f"Failed to fetch data from Yahoo Finance: {e.response.status_code}")
-    except Exception as e:
-        logger.error(f"Error fetching {category}: {e}")
-        raise ValueError(f"Failed to fetch {category}: {str(e)}")
+        return {
+            'metadata': {
+                'category': category,
+                'market_session': market_session if category == "most-active" else "regular",
+                'count': len(df),
+                'timestamp': pd.Timestamp.now().isoformat(),
+                'source': 'Yahoo Finance'
+            },
+            'stocks': df.head(count).to_dict('records')
+        }
 
 def _convert_to_numeric(value_str):
     """Convert string values like '1.2M', '3.45B', '123.4K' to numeric values."""
-    if pd.isna(value_str) or value_str == '' or value_str == '-':
+    if pd.isna(value_str) or value_str in ('', '-'):
         return None
 
     value_str = str(value_str).strip().replace(',', '')
-
-    # Handle already numeric values
+    
     try:
         return float(value_str)
     except ValueError:
         pass
 
     # Handle suffixed values (K, M, B, T)
-    multipliers = {
-        'K': 1_000,
-        'M': 1_000_000,
-        'B': 1_000_000_000,
-        'T': 1_000_000_000_000
-    }
-
+    multipliers = {'K': 1_000, 'M': 1_000_000, 'B': 1_000_000_000, 'T': 1_000_000_000_000}
+    
     for suffix, multiplier in multipliers.items():
         if value_str.upper().endswith(suffix):
             try:
-                number = float(value_str[:-1])
-                return number * multiplier
+                return float(value_str[:-1]) * multiplier
             except ValueError:
                 pass
 
-    # If all else fails, return the original string
     return value_str
 
 @mcp.tool()
@@ -221,8 +192,7 @@ async def get_crypto_fear_greed_index(days: int = 7) -> dict:
     async with _create_cached_async_client() as client:
         response = await client.get("https://api.alternative.me/fng/", params={"limit": days})
         response.raise_for_status()
-        data = response.json()["data"]
-    return data
+        return response.json()["data"]
 
 @mcp.tool()
 def get_google_trends(
@@ -262,54 +232,16 @@ def get_ticker_data(
     if not info:
         raise ValueError(f"No information available for {ticker}")
 
-    # Filter out clearly irrelevant metadata and technical details
-    excluded_fields = {
-        # Exchange/trading metadata
-        'exchange', 'quoteType', 'exchangeTimezoneName', 'exchangeTimezoneShortName',
-        'fullExchangeName', 'gmtOffSetMilliseconds', 'sourceInterval', 'exchangeDataDelayedBy',
-        'tradeable', 'triggerable', 'market', 'marketState', 'financialCurrency',
-        'quoteSourceName', 'messageBoardId', 'priceHint',
-
-        # Micro-trading data (more relevant for day traders)
-        'bid', 'ask', 'bidSize', 'askSize', 'preMarketChange', 'preMarketChangePercent',
-        'preMarketPrice', 'preMarketTime', 'postMarketChange', 'postMarketChangePercent',
-        'postMarketPrice', 'postMarketTime', 'regularMarketOpen', 'regularMarketTime',
-        'regularMarketPreviousClose', 'regularMarketDayRange', 'regularMarketDayLow', 'regularMarketDayHigh',
-
-        # Administrative/contact details
-        'address1', 'address2', 'city', 'state', 'zip', 'phone', 'fax', 'website',
-        'irWebsite', 'maxAge', 'uuid',
-
-        # Complex timestamp fields (keep simple date fields)
-        'earningsTimestamp', 'earningsTimestampStart', 'earningsTimestampEnd',
-        'mostRecentQuarter', 'nextFiscalYearEnd', 'lastFiscalYearEnd',
-        'sharesShortPreviousMonthDate', 'dateShortInterest',
-
-        # Redundant price/change calculations
-        'regularMarketChange', 'regularMarketChangePercent', 'fiftyTwoWeekLowChange',
-        'fiftyTwoWeekLowChangePercent', 'fiftyTwoWeekHighChange', 'fiftyTwoWeekHighChangePercent',
-        'fiftyDayAverageChange', 'fiftyDayAverageChangePercent', 'twoHundredDayAverageChange',
-        'twoHundredDayAverageChangePercent',
-
-        # Governance/risk scores (specialized use case)
-        'compensationAsOfEpochDate', 'compensationRisk', 'auditRisk', 'boardRisk',
-        'shareHolderRightsRisk', 'overallRisk', 'governanceEpochDate',
-
-        # ESG data (valuable but specialized)
-        'esgPopulated', 'environmentScore', 'socialScore', 'governanceScore',
-
-        # Redundant averages (keep the most useful ones)
-        'averageDailyVolume10Day', 'averageVolume10days',  # keep averageVolume and averageDailyVolume3Month
-
-        # Split/dividend detail fields (keep the rates/yields)
-        'lastSplitFactor', 'lastSplitDate', 'lastDividendValue', 'lastDividendDate',
-
-        # Display/formatting fields
-        'displayName', 'shortName',  # keep longName for full company name
+    # Keep only essential fields
+    essential_fields = {
+        'symbol', 'longName', 'currentPrice', 'marketCap', 'volume', 'trailingPE', 
+        'forwardPE', 'dividendYield', 'beta', 'eps', 'totalRevenue', 'totalDebt',
+        'profitMargins', 'operatingMargins', 'returnOnEquity', 'returnOnAssets',
+        'revenueGrowth', 'earningsGrowth', 'bookValue', 'priceToBook',
+        'enterpriseValue', 'pegRatio', 'trailingEps', 'forwardEps'
     }
 
-    filtered_info = {k: v for k, v in info.items() if k not in excluded_fields}
-    logger.info(f"Filtered ticker info from {len(info)} to {len(filtered_info)} fields by excluding {len(excluded_fields)} irrelevant fields")
+    filtered_info = {k: v for k, v in info.items() if k in essential_fields}
     data = {"info": filtered_info}
 
     if calendar := yfinance_utils.get_calendar(ticker):
@@ -318,13 +250,13 @@ def get_ticker_data(
     if news := yfinance_utils.get_news(ticker, limit=max_news):
         data["news"] = news
 
-    recommendations = yfinance_utils.get_recommendations(ticker, limit=max_recommendations)
-    if recommendations is not None and not recommendations.empty:
-        data["recommendations"] = recommendations.to_dict('split')
+    if recommendations := yfinance_utils.get_analyst_data(ticker, "recommendations", max_recommendations):
+        if not recommendations.empty:
+            data["recommendations"] = recommendations.to_dict('split')
 
-    upgrades = yfinance_utils.get_upgrades_downgrades(ticker, limit=max_upgrades)
-    if upgrades is not None and not upgrades.empty:
-        data["upgrades_downgrades"] = upgrades.to_dict('split')
+    if upgrades := yfinance_utils.get_analyst_data(ticker, "upgrades", max_upgrades):
+        if not upgrades.empty:
+            data["upgrades_downgrades"] = upgrades.to_dict('split')
 
     return data
 
@@ -354,18 +286,11 @@ def get_price_history(
     period: Literal["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"] = "1mo"
 ) -> dict:
     """Get historical OHLCV data: daily intervals for ≤1y periods, monthly intervals for ≥2y periods."""
-    # Use monthly intervals for longer periods to reduce data volume
-    if period in ["2y", "5y", "10y", "max"]:
-        interval = "1mo"
-        logger.info(f"Using monthly interval for {period} period to optimize data volume")
-    else:
-        interval = "1d"
-        logger.info(f"Using daily interval for {period} period")
-
+    interval = "1mo" if period in ["2y", "5y", "10y", "max"] else "1d"
+    
     history = yfinance_utils.get_price_history(ticker, period, interval)
     if history is None or history.empty:
         raise ValueError(f"No historical data found for {ticker}")
-
     return history.to_dict('split')
 
 @mcp.tool()
@@ -376,16 +301,11 @@ def get_financial_statements(
     max_periods: int = 8
 ) -> dict:
     data = yfinance_utils.get_financial_statements(ticker, statement_type, frequency)
-
     if data is None or data.empty:
         raise ValueError(f"No {statement_type} statement data found for {ticker}")
 
-    # Limit to most recent periods if data is extensive
     if len(data.columns) > max_periods:
-        # Keep the most recent periods (columns are typically in reverse chronological order)
         data = data.iloc[:, :max_periods]
-        logger.info(f"Limited {statement_type} statement to {max_periods} most recent periods to optimize context size")
-
     return data.to_dict('split')
 
 @mcp.tool()
@@ -408,19 +328,15 @@ def get_institutional_holders(ticker: str, top_n: int = 20) -> dict:
 @mcp.tool()
 def get_earnings_history(ticker: str, max_entries: int = 8) -> dict:
     earnings_history = yfinance_utils.get_earnings_history(ticker, limit=max_entries)
-
     if earnings_history is None or earnings_history.empty:
         raise ValueError(f"No earnings history data found for {ticker}")
-
     return earnings_history.to_dict('split')
 
 @mcp.tool()
 def get_insider_trades(ticker: str, max_trades: int = 20) -> dict:
     trades = yfinance_utils.get_insider_trades(ticker, limit=max_trades)
-
     if trades is None or trades.empty:
         raise ValueError(f"No insider trading data found for {ticker}")
-
     return trades.to_dict('split')
 
 # Only register the technical indicator tool if TA-Lib is available

@@ -44,7 +44,7 @@ uvx "investor-agent[ta]"
 
 ### Market Data
 - **`get_market_movers(category="most-active", count=25, market_session="regular")`** - Market movers data including top gainers, losers, or most active stocks. Supports different market sessions (regular/pre-market/after-hours) for most-active category. Returns up to 100 stocks with cleaned percentage changes, volume, and market cap data
-- **`get_ticker_data(ticker, max_news=5, max_recommendations=5, max_upgrades=5)`** - Comprehensive ticker report with smart field filtering to exclude irrelevant metadata and configurable limits for news, recommendations, and upgrades/downgrades
+- **`get_ticker_data(ticker, max_news=5, max_recommendations=5, max_upgrades=5)`** - Comprehensive ticker report with essential field filtering and configurable limits for news, analyst recommendations, and upgrades/downgrades
 - **`get_options(ticker_symbol, num_options=10, start_date, end_date, strike_lower, strike_upper, option_type)`** - Options data with advanced filtering by date range (YYYY-MM-DD), strike price bounds, and option type (C=calls, P=puts)
 - **`get_price_history(ticker, period="1mo")`** - Historical OHLCV data with intelligent interval selection: daily intervals for periods ≤1y, monthly intervals for periods ≥2y to optimize data volume
 - **`get_financial_statements(ticker, statement_type="income", frequency="quarterly", max_periods=8)`** - Financial statements (income/balance/cash) with period limiting for context optimization
