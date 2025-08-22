@@ -3,6 +3,7 @@ from typing import Literal
 import sys
 
 import httpx
+import pandas as pd
 from mcp.server.fastmcp import FastMCP
 try:
     import talib  # type: ignore
@@ -21,7 +22,26 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stderr)]
 )
 
-mcp = FastMCP("Investor-Agent", dependencies=["yfinance", "httpx", "pandas", "pytrends"]) # TA-Lib is optional
+mcp = FastMCP("Investor-Agent", dependencies=["yfinance", "httpx", "pandas", "pytrends", "beautifulsoup4"]) # Added bs4
+def _create_cached_async_client(headers: dict | None = None) -> httpx.AsyncClient:
+    """Create an httpx.AsyncClient with caching transport when available."""
+    try:
+        from httpx_caching import CachingTransport  # type: ignore
+        transport = CachingTransport()
+        return httpx.AsyncClient(
+            timeout=30.0,
+            follow_redirects=True,
+            headers=headers,
+            transport=transport,
+        )
+    except Exception:
+        # Fallback to regular client if caching transport unavailable
+        return httpx.AsyncClient(
+            timeout=30.0,
+            follow_redirects=True,
+            headers=headers,
+        )
+
 
 FearGreedIndicator = Literal[
     "fear_and_greed",
@@ -32,6 +52,137 @@ FearGreedIndicator = Literal[
     "junk_bond_demand",
     "safe_haven_demand"
 ]
+
+@mcp.tool()
+async def get_market_movers(
+    category: Literal["gainers", "losers", "most-active"] = "most-active",
+    count: int = 25,
+    market_session: Literal["regular", "pre-market", "after-hours"] = "regular"
+) -> dict:
+    """
+    Get market movers: top gainers, losers, or most active stocks.
+    Supports different market sessions for most-active category.
+
+    Args:
+        category: Type of movers to fetch
+        count: Number of stocks to return (max 100)
+        market_session: Market session (only applies to most-active category)
+
+    Returns:
+        Dictionary with market mover data
+    """
+    from bs4 import BeautifulSoup
+
+    count = min(max(count, 1), 100)
+
+    # Build URLs based on category and market session
+    if category == "most-active":
+        if market_session == "regular":
+            url = f"https://finance.yahoo.com/most-active?count={count}&offset=0"
+        elif market_session == "pre-market":
+            url = f"https://finance.yahoo.com/markets/stocks/pre-market?count={count}&offset=0"
+        elif market_session == "after-hours":
+            url = f"https://finance.yahoo.com/markets/stocks/after-hours?count={count}&offset=0"
+        else:
+            raise ValueError(f"Invalid market session: {market_session}")
+    else:
+        # Gainers and losers only available for regular session
+        url_map = {
+            "gainers": f"https://finance.yahoo.com/gainers?count={count}&offset=0",
+            "losers": f"https://finance.yahoo.com/losers?count={count}&offset=0"
+        }
+        url = url_map.get(category)
+        if not url:
+            raise ValueError(f"Invalid category: {category}")
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+    }
+
+    try:
+        async with _create_cached_async_client(headers=headers) as client:
+            logger.info(f"Fetching {category} ({market_session} session) from: {url}")
+            response = await client.get(url)
+            response.raise_for_status()
+
+            # Parse with pandas
+            tables = pd.read_html(response.content)
+            if not tables:
+                raise ValueError(f"No data found for {category}")
+
+            df = tables[0].copy()
+
+            # Clean up the data
+            if '52 Week Range' in df.columns:
+                df = df.drop('52 Week Range', axis=1)
+
+            # Clean percentage change column
+            if '% Change' in df.columns:
+                df['% Change'] = df['% Change'].astype(str).str.replace('%', '').str.replace('+', '').str.replace(',', '')
+                df['% Change'] = pd.to_numeric(df['% Change'], errors='coerce')
+
+            # Clean volume and market cap columns
+            volume_cols = [col for col in df.columns if 'Vol' in col or 'Volume' in col]
+            market_cap_cols = [col for col in df.columns if 'Market Cap' in col or 'Market' in col]
+
+            for col in volume_cols + market_cap_cols:
+                if col in df.columns:
+                    df[col] = df[col].astype(str).apply(_convert_to_numeric)
+
+            return {
+                'metadata': {
+                    'category': category,
+                    'market_session': market_session if category == "most-active" else "regular",
+                    'count': len(df),
+                    'timestamp': pd.Timestamp.now().isoformat(),
+                    'source': 'Yahoo Finance'
+                },
+                'stocks': df.head(count).to_dict('records')
+            }
+
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error fetching {category}: {e}")
+        raise ValueError(f"Failed to fetch data from Yahoo Finance: {e.response.status_code}")
+    except Exception as e:
+        logger.error(f"Error fetching {category}: {e}")
+        raise ValueError(f"Failed to fetch {category}: {str(e)}")
+
+def _convert_to_numeric(value_str):
+    """Convert string values like '1.2M', '3.45B', '123.4K' to numeric values."""
+    if pd.isna(value_str) or value_str == '' or value_str == '-':
+        return None
+
+    value_str = str(value_str).strip().replace(',', '')
+
+    # Handle already numeric values
+    try:
+        return float(value_str)
+    except ValueError:
+        pass
+
+    # Handle suffixed values (K, M, B, T)
+    multipliers = {
+        'K': 1_000,
+        'M': 1_000_000,
+        'B': 1_000_000_000,
+        'T': 1_000_000_000_000
+    }
+
+    for suffix, multiplier in multipliers.items():
+        if value_str.upper().endswith(suffix):
+            try:
+                number = float(value_str[:-1])
+                return number * multiplier
+            except ValueError:
+                pass
+
+    # If all else fails, return the original string
+    return value_str
 
 @mcp.tool()
 async def get_cnn_fear_greed_index(
@@ -67,7 +218,7 @@ async def get_cnn_fear_greed_index(
 @mcp.tool()
 async def get_crypto_fear_greed_index(days: int = 7) -> dict:
     """Get historical Crypto Fear & Greed Index data."""
-    async with httpx.AsyncClient() as client:
+    async with _create_cached_async_client() as client:
         response = await client.get("https://api.alternative.me/fng/", params={"limit": days})
         response.raise_for_status()
         data = response.json()["data"]
