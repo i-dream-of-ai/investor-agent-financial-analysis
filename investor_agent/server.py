@@ -2,9 +2,7 @@ import logging
 from typing import Literal
 import sys
 
-import httpx
 import pandas as pd
-import hishel
 from mcp.server.fastmcp import FastMCP
 try:
     import talib  # type: ignore
@@ -12,8 +10,15 @@ try:
 except ImportError:
     _ta_available = False
 
+try:
+    import playwright  # type: ignore
+    _playwright_available = True
+except ImportError:
+    _playwright_available = False
+
 from . import yfinance_utils
 from .sentiment import fetch_fng_data
+from . import yahoo_finance_utils
 
 logger = logging.getLogger(__name__)
 
@@ -23,24 +28,7 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stderr)]
 )
 
-mcp = FastMCP("Investor-Agent", dependencies=["yfinance", "httpx", "pandas", "pytrends", "beautifulsoup4"]) # Added bs4
-
-YAHOO_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.5',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
-    'Upgrade-Insecure-Requests': '1',
-}
-def _create_cached_async_client(headers: dict | None = None) -> httpx.AsyncClient:
-    """Create an httpx.AsyncClient with caching enabled via hishel."""
-    hishel.install_cache()
-    return httpx.AsyncClient(
-        timeout=30.0,
-        follow_redirects=True,
-        headers=headers,
-    )
+mcp = FastMCP("Investor-Agent", dependencies=["yfinance", "httpx", "pandas", "pytrends", "beautifulsoup4"])
 
 
 FearGreedIndicator = Literal[
@@ -71,89 +59,8 @@ async def get_market_movers(
     Returns:
         Dictionary with market mover data
     """
-    from bs4 import BeautifulSoup
+    return await yahoo_finance_utils.get_market_movers_data(category, count, market_session)
 
-    count = min(max(count, 1), 100)
-
-    # Build URLs based on category and market session
-    if category == "most-active":
-        if market_session == "regular":
-            url = f"https://finance.yahoo.com/most-active?count={count}&offset=0"
-        elif market_session == "pre-market":
-            url = f"https://finance.yahoo.com/markets/stocks/pre-market?count={count}&offset=0"
-        elif market_session == "after-hours":
-            url = f"https://finance.yahoo.com/markets/stocks/after-hours?count={count}&offset=0"
-        else:
-            raise ValueError(f"Invalid market session: {market_session}")
-    else:
-        # Gainers and losers only available for regular session
-        url_map = {
-            "gainers": f"https://finance.yahoo.com/gainers?count={count}&offset=0",
-            "losers": f"https://finance.yahoo.com/losers?count={count}&offset=0"
-        }
-        url = url_map.get(category)
-        if not url:
-            raise ValueError(f"Invalid category: {category}")
-
-    async with _create_cached_async_client(headers=YAHOO_HEADERS) as client:
-        logger.info(f"Fetching {category} ({market_session} session) from: {url}")
-        response = await client.get(url)
-        response.raise_for_status()
-
-        # Parse with pandas
-        tables = pd.read_html(response.content)
-        if not tables:
-            raise ValueError(f"No data found for {category}")
-
-        df = tables[0].copy()
-
-        # Clean up the data
-        df = df.drop('52 Week Range', axis=1, errors='ignore')
-
-        # Clean percentage change column
-        if '% Change' in df.columns:
-            df['% Change'] = df['% Change'].astype(str).str.replace('[%+,]', '', regex=True)
-            df['% Change'] = pd.to_numeric(df['% Change'], errors='coerce')
-
-        # Clean numeric columns
-        numeric_cols = [col for col in df.columns if any(x in col for x in ['Vol', 'Volume', 'Market Cap', 'Market'])]
-        for col in numeric_cols:
-            df[col] = df[col].astype(str).apply(_convert_to_numeric)
-
-        return {
-            'metadata': {
-                'category': category,
-                'market_session': market_session if category == "most-active" else "regular",
-                'count': len(df),
-                'timestamp': pd.Timestamp.now().isoformat(),
-                'source': 'Yahoo Finance'
-            },
-            'stocks': df.head(count).to_dict('records')
-        }
-
-def _convert_to_numeric(value_str):
-    """Convert string values like '1.2M', '3.45B', '123.4K' to numeric values."""
-    if pd.isna(value_str) or value_str in ('', '-'):
-        return None
-
-    value_str = str(value_str).strip().replace(',', '')
-    
-    try:
-        return float(value_str)
-    except ValueError:
-        pass
-
-    # Handle suffixed values (K, M, B, T)
-    multipliers = {'K': 1_000, 'M': 1_000_000, 'B': 1_000_000_000, 'T': 1_000_000_000_000}
-    
-    for suffix, multiplier in multipliers.items():
-        if value_str.upper().endswith(suffix):
-            try:
-                return float(value_str[:-1]) * multiplier
-            except ValueError:
-                pass
-
-    return value_str
 
 @mcp.tool()
 async def get_cnn_fear_greed_index(
@@ -189,7 +96,7 @@ async def get_cnn_fear_greed_index(
 @mcp.tool()
 async def get_crypto_fear_greed_index(days: int = 7) -> dict:
     """Get historical Crypto Fear & Greed Index data."""
-    async with _create_cached_async_client() as client:
+    async with yahoo_finance_utils.create_cached_async_client() as client:
         response = await client.get("https://api.alternative.me/fng/", params={"limit": days})
         response.raise_for_status()
         return response.json()["data"]
@@ -234,7 +141,7 @@ def get_ticker_data(
 
     # Keep only essential fields
     essential_fields = {
-        'symbol', 'longName', 'currentPrice', 'marketCap', 'volume', 'trailingPE', 
+        'symbol', 'longName', 'currentPrice', 'marketCap', 'volume', 'trailingPE',
         'forwardPE', 'dividendYield', 'beta', 'eps', 'totalRevenue', 'totalDebt',
         'profitMargins', 'operatingMargins', 'returnOnEquity', 'returnOnAssets',
         'revenueGrowth', 'earningsGrowth', 'bookValue', 'priceToBook',
@@ -287,7 +194,7 @@ def get_price_history(
 ) -> dict:
     """Get historical OHLCV data: daily intervals for ≤1y periods, monthly intervals for ≥2y periods."""
     interval = "1mo" if period in ["2y", "5y", "10y", "max"] else "1d"
-    
+
     history = yfinance_utils.get_price_history(ticker, period, interval)
     if history is None or history.empty:
         raise ValueError(f"No historical data found for {ticker}")
@@ -338,6 +245,17 @@ def get_insider_trades(ticker: str, max_trades: int = 20) -> dict:
     if trades is None or trades.empty:
         raise ValueError(f"No insider trading data found for {ticker}")
     return trades.to_dict('split')
+
+# Only register the earnings calendar tool if Playwright is available
+if _playwright_available:
+    @mcp.tool()
+    async def get_earnings_calendar(
+        start: str | None = None,
+        end: str | None = None,
+        limit: int = 100
+    ) -> dict:
+        """Get earnings calendar for a date range."""
+        return await yahoo_finance_utils.get_earnings_calendar_data(start, end, limit)
 
 # Only register the technical indicator tool if TA-Lib is available
 if _ta_available:

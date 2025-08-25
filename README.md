@@ -12,6 +12,7 @@ The **investor-agent** is a Model Context Protocol (MCP) server that provides co
 - **Historical Data:** Price trends and earnings history
 - **Financial Statements:** Income, balance sheet, and cash flow statements
 - **Ownership Analysis:** Institutional holders and insider trading activity
+- **Earnings Calendar:** Upcoming earnings announcements with date filtering (optional)
 - **Market Sentiment:** CNN Fear & Greed Index, Crypto Fear & Greed Index, and Google Trends sentiment analysis
 - **Technical Analysis:** SMA, EMA, RSI, MACD, BBANDS indicators (optional)
 
@@ -25,8 +26,10 @@ The server integrates with [yfinance](https://pypi.org/project/yfinance/) for ma
   curl -LsSf https://astral.sh/uv/install.sh | sh
   ```
 
-### Optional: TA-Lib C Library
-Required for technical indicators. Follow [official installation instructions](https://ta-lib.org/install/).
+### Optional Dependencies
+
+- **TA-Lib C Library:** Required for technical indicators. Follow [official installation instructions](https://ta-lib.org/install/).
+- **Playwright:** Required for earnings calendar functionality. Installed automatically with the `playwright` optional dependency.
 
 ## Installation
 
@@ -38,6 +41,18 @@ uvx investor-agent
 
 # With technical indicators (requires TA-Lib)
 uvx "investor-agent[ta]"
+
+# With earnings calendar (requires Playwright)
+uvx "investor-agent[playwright]"
+# Note: After first installation, run:
+#   playwright install-deps chromium
+#   playwright install chromium
+
+# With both technical indicators and earnings calendar
+uvx "investor-agent[ta,playwright]"
+# Note: After first installation, run:
+#   playwright install-deps chromium
+#   playwright install chromium
 ```
 
 ## Tools
@@ -51,6 +66,7 @@ uvx "investor-agent[ta]"
 - **`get_institutional_holders(ticker, top_n=20)`** - Major institutional and mutual fund holders data
 - **`get_earnings_history(ticker, max_entries=8)`** - Historical earnings data with configurable entry limits
 - **`get_insider_trades(ticker, max_trades=20)`** - Recent insider trading activity with configurable trade limits
+- **`get_earnings_calendar(start=None, end=None, limit=100)`** - Upcoming earnings announcements with optional date filtering (YYYY-MM-DD format). Requires Playwright dependency.
 
 ### Market Sentiment
 - **`get_cnn_fear_greed_index(days=0, indicators=None)`** - CNN Fear & Greed Index with support for up to 30 days of historical data and selective indicator filtering. Available indicators: fear_and_greed, fear_and_greed_historical, put_call_options, market_volatility_vix, market_volatility_vix_50, junk_bond_demand, safe_haven_demand
